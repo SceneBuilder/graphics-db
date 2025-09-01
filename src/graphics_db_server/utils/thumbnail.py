@@ -6,7 +6,15 @@ import pyvista as pv
 from graphics_db_server.logging import logger
 
 
-def generate_thumbnail_from_glb(glb_path, output_path, resolution, overwrite=False):
+VIEW_DIRECTIONS = {
+    "front": {"vector": [0, 0, 1], "viewup": [0, 1, 0]},
+    "right": {"vector": [1, 0, 0], "viewup": [0, 1, 0]},
+    "top": {"vector": [0, 1, 0], "viewup": [0, 0, -1]},
+    "isometric": {"vector": [1, 1, 1], "viewup": [0, 1, 0]}
+}
+
+
+def generate_thumbnail_from_glb(glb_path, output_path, resolution, overwrite=False, view_direction="isometric"):
     """
     Generates a thumbnail for a single .glb file using PyVista.
 
@@ -15,6 +23,7 @@ def generate_thumbnail_from_glb(glb_path, output_path, resolution, overwrite=Fal
         output_path (str): The full path for the output PNG thumbnail.
         resolution (int): The resolution (width and height) of the thumbnail.
         overwrite (bool): If True, overwrites the thumbnail if it already exists.
+        view_direction (str): The viewing direction. Options: "front", "right", "top", "isometric".
     """
     # Check if thumbnail already exists and if we should skip it
     if os.path.exists(output_path) and not overwrite:
@@ -34,8 +43,12 @@ def generate_thumbnail_from_glb(glb_path, output_path, resolution, overwrite=Fal
         # Directly import GLTF/GLB
         plotter.import_gltf(glb_path)
 
-        # Set the camera to an isometric view for a good default angle
-        plotter.view_vector(vector=[1, 1, 1], viewup=[0, 1, 0])
+        # Set the camera view based on the specified direction
+        if view_direction.lower() not in VIEW_DIRECTIONS:
+            raise ValueError(f"Invalid view_direction '{view_direction}'. Options: {list(VIEW_DIRECTIONS.keys())}")
+        
+        view_config = VIEW_DIRECTIONS[view_direction.lower()]
+        plotter.view_vector(vector=view_config["vector"], viewup=view_config["viewup"])
 
         # Optional: add XYZ axes annotation gizmo
         plotter.add_axes()
