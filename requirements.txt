@@ -13,3 +13,4 @@ rich
 torch
 uvicorn
 sentence-transformers
+requests

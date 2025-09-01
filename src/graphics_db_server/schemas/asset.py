@@ -11,6 +11,7 @@ class Asset(BaseModel):
     tags: Optional[list[str]] = []
     source: str | None = None # TEMP
     license: str | None = None # TEMP
+    asset_type: str | None = None  # "model", "texture", "hdri"
     # sourceId: str  # NOTE: let's try not to keep this unless really necessary
 
     model_config = ConfigDict(from_attributes=True)

@@ -22,6 +22,11 @@ VALIDATE_SCALE = False
 SCALE_RESOLUTION_STRATEGY = "reject"  # options: ["reject", "rescale"]
 SCALE_MAX_LENGTH_THRESHOLD = 100.0  # filter out centimeter-based (or just large) assets
 
+# Poly Haven API
+POLYHAVEN_API_BASE_URL = "https://api.polyhaven.com"
+POLYHAVEN_USER_AGENT = "graphics-db-server/0.0.1"
+POLYHAVEN_CACHE_DIR = os.path.expanduser("~/.polyhaven_cache")
+
 # App
 USE_MEAN_POOL = True
 THUMBNAIL_RESOLUTION = 1024

@@ -22,6 +22,10 @@ def search_assets(
             SELECT
                 uid,
                 url,
+                tags,
+                source,
+                license,
+                asset_type,
                 (1 - (clip_embedding <=> %(query_vector_clip)s)) + (1 - (sbert_embedding <=> %(query_vector_sbert)s)) as similarity_score
             FROM {TABLE_NAME}
             ORDER BY (clip_embedding <=> %(query_vector_clip)s) + (sbert_embedding <=> %(query_vector_sbert)s)
@@ -51,6 +55,9 @@ def insert_assets(conn, assets: List[Asset]):
                 asset.uid,
                 asset.url,
                 asset.tags,
+                asset.source,
+                asset.license,
+                asset.asset_type,
                 asset.clip_embedding,
                 asset.sbert_embedding,
             )
@@ -58,7 +65,7 @@ def insert_assets(conn, assets: List[Asset]):
 
     with conn.cursor() as cur:
         cur.executemany(
-            "INSERT INTO assets (uid, url, tags, clip_embedding, sbert_embedding) VALUES (%s, %s, %s, %s, %s)",
+            "INSERT INTO assets (uid, url, tags, source, license, asset_type, clip_embedding, sbert_embedding) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
             data,
         )
         conn.commit()
