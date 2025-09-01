@@ -2,6 +2,8 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+import pyvista as pv
+
 from graphics_db_server.logging import logger
 from graphics_db_server.utils.geometry import get_max_dimension
 
@@ -67,3 +69,53 @@ def validate_asset_scales(
             logger.info(f"Asset {uid} passed scale validation")
 
     return validation_results
+
+
+def scale_glb_model(input_path: str, output_path: str, scale_factor: float) -> bool:
+    """
+    Loads a GLB model, scales it uniformly, and saves it to a new file.
+
+    Args:
+        input_path: The file path for the input GLB model.
+        output_path: The file path for the scaled output GLB model.
+        scale_factor: Uniform scaling factor for all axes.
+    
+    Returns:
+        True if successful, False otherwise.
+    """
+    if not Path(input_path).exists():
+        logger.error(f"Input file not found at '{input_path}'")
+        return False
+
+    logger.info(f"Loading model from: {input_path}")
+
+    try:
+        mesh = pv.read(input_path)
+    except Exception as e:
+        logger.error(f"Failed to read the model file: {e}")
+        return False
+
+    logger.info("Model loaded successfully.")
+    logger.info(f"Original Bounds: {mesh.bounds}")
+
+    if isinstance(mesh, pv.MultiBlock):
+        for i, block in enumerate(mesh):
+            if block is not None:
+                mesh[i] = block.scale(scale_factor, inplace=False)
+    else:
+        mesh.scale(scale_factor, inplace=True)
+
+    logger.info(f"Applied uniform scaling factor: {scale_factor}")
+    logger.info(f"New Scaled Bounds: {mesh.bounds}")
+
+    plotter = pv.Plotter(off_screen=True)
+    plotter.add_mesh(mesh)
+
+    logger.info(f"Exporting scaled model to: {output_path}")
+    try:
+        plotter.export_gltf(output_path)
+        logger.info("Export complete!")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to export the model file: {e}")
+        return False

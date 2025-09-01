@@ -18,7 +18,7 @@ from graphics_db_server.core.config import (
 )
 from graphics_db_server.logging import logger
 from graphics_db_server.schemas.asset import AssetCreate
-from graphics_db_server.utils.asset_validation import validate_asset_scales
+from graphics_db_server.utils.scale_validation import validate_asset_scales
 from graphics_db_server.utils.thumbnail import generate_thumbnail_from_glb
 
 

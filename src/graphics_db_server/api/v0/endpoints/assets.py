@@ -14,7 +14,7 @@ from graphics_db_server.sources.from_objaverse import (
     download_assets,
     get_thumbnails,
 )
-from graphics_db_server.utils.asset_validation import validate_asset_scales
+from graphics_db_server.utils.scale_validation import validate_asset_scales
 from graphics_db_server.utils.geometry import get_glb_dimensions
 
 router = APIRouter()
