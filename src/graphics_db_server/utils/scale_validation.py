@@ -1,6 +1,7 @@
+import subprocess
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 import pyvista as pv
 
@@ -71,9 +72,66 @@ def validate_asset_scales(
     return validation_results
 
 
-def scale_glb_model(input_path: str, output_path: str, scale_factor: float) -> bool:
+def scale_glb_model_gltf_transform(input_path: str, output_path: str, scale_factor: float) -> bool:
     """
-    Loads a GLB model, scales it uniformly, and saves it to a new file.
+    Scales a GLB model using the gltf-transform CLI tool.
+
+    Args:
+        input_path: The file path for the input GLB model.
+        output_path: The file path for the scaled output GLB model.
+        scale_factor: Uniform scaling factor for all axes.
+    
+    Returns:
+        True if successful, False otherwise.
+    """
+    if not Path(input_path).exists():
+        logger.error(f"Input file not found at '{input_path}'")
+        return False
+    
+    if isinstance(input_path, Path):
+        input_path = str(input_path)
+    if isinstance(output_path, Path):
+        output_path = str(output_path)
+
+    command = [
+        "gltf-transform",
+        "rescale", 
+        "--factor", str(scale_factor),
+        input_path,
+        output_path
+    ]
+
+    try:
+        logger.info(f"Running command: {' '.join(command)}")
+        
+        result = subprocess.run(
+            command,
+            check=True,
+            capture_output=True,
+            text=True
+        )
+
+        logger.info("GLB scaling complete!")
+        if result.stdout:
+            logger.debug(f"gltf-transform output: {result.stdout}")
+        
+        return True
+
+    except FileNotFoundError:
+        logger.error("'gltf-transform' command not found. Please install it with 'npm install -g @gltf-transform/cli'")
+        return False
+
+    except subprocess.CalledProcessError as e:
+        logger.error(f"gltf-transform failed with exit code {e.returncode}")
+        # if e.stderr:
+        #     logger.error(f"Error details: {e.stderr}")
+        logger.error(f"Error details: {e.stderr}")  # TEMP
+        return False
+
+
+def scale_glb_model_pyvista(input_path: str, output_path: str, scale_factor: float) -> bool:
+    """
+    Loads a GLB model, scales it uniformly, and saves it to a new file using PyVista.
 
     Args:
         input_path: The file path for the input GLB model.
@@ -118,4 +176,31 @@ def scale_glb_model(input_path: str, output_path: str, scale_factor: float) -> b
         return True
     except Exception as e:
         logger.error(f"Failed to export the model file: {e}")
+        return False
+
+
+def scale_glb_model(
+    input_path: str, 
+    output_path: str, 
+    scale_factor: float, 
+    backend: Literal["pyvista", "gltf_transform"] = "pyvista"
+) -> bool:
+    """
+    Scales a GLB model using the specified backend.
+
+    Args:
+        input_path: The file path for the input GLB model.
+        output_path: The file path for the scaled output GLB model.
+        scale_factor: Uniform scaling factor for all axes.
+        backend: The backend to use for scaling ("pyvista" or "gltf_transform").
+    
+    Returns:
+        True if successful, False otherwise.
+    """
+    if backend == "pyvista":
+        return scale_glb_model_pyvista(input_path, output_path, scale_factor)
+    elif backend == "gltf_transform":
+        return scale_glb_model_gltf_transform(input_path, output_path, scale_factor)
+    else:
+        logger.error(f"Unknown backend: {backend}. Supported backends: 'pyvista', 'gltf_transform'")
         return False

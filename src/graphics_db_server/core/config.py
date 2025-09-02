@@ -17,10 +17,19 @@ EMBEDDING_PATHS = {
         "sbert": "data/objaverse/sbert_features.pkl",
     }
 }
+LOCAL_FS_PATHS = {
+    "Objaverse": "./data/mini_objaverse"  # debug
+    # "Objaverse": "/media/ycho358/Expansion/.objaverse"  # prod
+}
 # VALIDATE_SCALE = True
 VALIDATE_SCALE = False
 SCALE_RESOLUTION_STRATEGY = "reject"  # options: ["reject", "rescale"]
 SCALE_MAX_LENGTH_THRESHOLD = 100.0  # filter out centimeter-based (or just large) assets
+
+# VLM
+# VLM_MODEL_NAME = "Qwen/Qwen2.5-VL-3B-Instruct-AWQ"
+VLM_MODEL_NAME = "Qwen/Qwen2.5-VL-7B-Instruct-AWQ"
+VLM_PROVIDER_BASE_URL = "http://localhost:8000/v1"
 
 # App
 USE_MEAN_POOL = True
