@@ -38,6 +38,19 @@
                 "panel": "new"
             },
             "problemMatcher": []
+        },
+        {
+            "label": "Clean Scaled Files @ `data/mini_objaverse`",
+            "type": "shell",
+            "command": "python3",
+            "args": ["misc/remove_scaled_files.py", "data/mini_objaverse"],
+            "group": "build",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "panel": "new"
+            },
+            "problemMatcher": []
         }
     ]
 }

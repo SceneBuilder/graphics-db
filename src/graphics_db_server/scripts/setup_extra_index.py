@@ -67,9 +67,9 @@ def setup_database():
     columns = {
         "misscaled": "INTEGER DEFAULT 0",
         "misscaling_type": "TEXT",
-        "bbox_x": "REAL",
-        "bbox_y": "REAL",
-        "bbox_z": "REAL",
+        "dims_x": "REAL",
+        "dims_y": "REAL",
+        "dims_z": "REAL",
         "metadata_version": "INTEGER",
         "last_updated": "TEXT",
         "thumbnail_paths": "TEXT",
@@ -170,6 +170,7 @@ class ScaleAnalysisOutput(BaseModel):
     misscaled: bool
     misscaling_type: Literal["mm", "cm", "10x", "arbitrary"]
     correction_factor: float | None = None
+    object_description: str | None = None
     rationale: str | None = None
 
 
@@ -180,20 +181,21 @@ model = OpenAIChatModel(
     provider=OpenAIProvider(base_url=VLM_PROVIDER_BASE_URL, api_key="EMPTY"),
 )
 system_prompt = (
-    "You are an assistant who is in charge of the quality control of "
-    "3d assets that sometimes have an incorrect scale."
-    "Your job is to check if assets have realistic sizes that are consistent with "
-    "the typical sizes of corresponding objects in the real world."
-    "You will be given paths to thumbnail images of the object, as well as the 3D dimensions."
-    "(If given image paths, please use `read_media_file(filepath: str)` function to see all images.)"
-    "A common source of error are the use of non-meter length unit such as mm or cm,"
-    "despite GLTF specifications that require meter units. "
+    "You are an AI model that is in charge of the quality control of "
+    "3d assets that sometimes have an incorrect scale. "
+    "Your job is to check if the given 3D assets have realistic sizes that are consistent with "
+    "the typical sizes of respective objects in the real world. "
+    "\nYou will be given paths to thumbnail images of the object, as well as the 3D dimensions. "
+    "(If given image paths, please use `read_media_file(filepath: str)` function to first see all of the images.) "
+    "A common cause of error is the use of non-meter length unit such as mm or cm, "
+    "despite GLTF specifications that mandate meter units. "
     "In this case, it is easy to deduce the correct scale—by simply dividing the "
-    "dimensions by 100 or 1,000 respectively."
-    "There are also assets that are arbitrarily misscaled."
-    "Please classify whether the object is misscaled, the type of misccaling (mm, cm, 10x, or arbitrary),"
-    "and a 'correction factor' that must be applied to restore the asset to a reasonable scale."
-    "The correction factor is to be multiplied into the scale, so if you want to size it down, provide a number smaller than 1."
+    "dimensions by 100 or 1,000 respectively. "
+    "There are also assets that are arbitrarily misscaled. "
+    "\nPlease classify whether the object is misscaled, the type of misccaling (mm, cm, 10x, or arbitrary), "
+    "and a 'correction factor' that must be applied to restore the asset to the correct scale. "
+    "The correction factor is will be multiplied to the asset, so if you want to size it down, provide a number smaller than 1. "
+    "Additinoally, please output a description of what object you are looking at.\n"
     "Finally, please output a rationale explaining why you chose to classify it as misscaled or not, and your reasoning behind the correction factor."
 )
 # NOTE can include: output response example
@@ -205,7 +207,6 @@ scale_analysis_agent = Agent(
     output_type=ScaleAnalysisOutput,
     tools=[read_media_file],
 )
-user_prompt = "Please output your result for this 3D asset."
 
 @scale_analysis_agent.system_prompt
 async def add_inputs(ctx: RunContext[ScaleAnalysisInput]) -> str:
@@ -214,44 +215,54 @@ async def add_inputs(ctx: RunContext[ScaleAnalysisInput]) -> str:
 
 def calc_metadata(file_path: Path, thumbnail_paths: list[Path] | None = None) -> dict:
     """ """
-    _, bbox, _ = get_glb_dimensions(file_path)
+    _, dims, _ = get_glb_dimensions(file_path)
 
+    user_prompt = (
+        f"**Asset {file_path.stem}**:",
+        f"Dimensions: {[round(e, 2) for e in dims]}",
+        "Please analyze this 3D asset.",
+    )
+    user_prompt = "\n".join(user_prompt)
     extra_info = (
         "\nExtra information:",
-        f"- Larger than than 100 m: {max(bbox) > 100}",
-        f"- Dimensions if scaled down by 100: {[round(e / 100, 2) for e in bbox]}",
-        f"- Larger than 1,000 m: {max(bbox) > 1000}",
-        f"- Dimensions if scaled down by 1,000: {[round(e / 1000, 2) for e in bbox]}",
+        f"- Larger than than 100 m: {max(dims) > 100}",
+        f"- Dimensions if scaled down by 100: {[round(e / 100, 2) for e in dims]}",
+        f"- Larger than 1,000 m: {max(dims) > 1000}",
+        f"- Dimensions if scaled down by 1,000: {[round(e / 1000, 2) for e in dims]}",
     )
-    extra_info_str = "\n".join(extra_info)
+    extra_info = "\n".join(extra_info)
     question = "Are you able to see the thumbnail images?"
     inputs = ScaleAnalysisInput(
         thumbnail_paths=thumbnail_paths, question=question if DEBUG else None
     )
+    if DEBUG:
+        logger.debug(f"Asset [{file_path.stem}] Inputs: {inputs}")
+        logger.debug(f"Asset [{file_path.stem}] User Prompt: {user_prompt + extra_info}")
 
-    response = scale_analysis_agent.run_sync(user_prompt + extra_info_str, deps=inputs)
+    response = scale_analysis_agent.run_sync(user_prompt + extra_info, deps=inputs)
     output: ScaleAnalysisOutput = response.output
+
+    if DEBUG:
+        logger.debug(f"Asset [{file_path.stem}] Object Description: {output.object_description}")
+        logger.debug(f"Asset [{file_path.stem}] Rationale: {output.rationale}")
 
     sf = output.correction_factor  # scaling factor
     if sf is not None and not math.isclose(sf, 1, abs_tol=0.1):
         scaled_model_path = file_path.with_stem(f"{file_path.stem}_scaled")
-        success = scale_glb_model(file_path, scaled_model_path, sf, backend="gltf_transform")
+        success = scale_glb_model(file_path, scaled_model_path, sf, backend="blender")
         if not success:
             return "failure"
         
     if sf is None and output.misscaled:
         return "failure"
-        # NOTE: This might be cases where bbox are zeros, e.g., due to being non-surface photogrammetry
-
-    if DEBUG:
-        logger.debug(f"Asset [{file_path.stem}] Rationale: {output.rationale}")
+        # NOTE: This might be cases where dims are zeros, e.g., due to being non-surface photogrammetry
 
     return {
         "misscaled": 1 if output.misscaled else 0,
         "misscaling_type": output.misscaling_type,
-        "bbox_x": bbox[0],
-        "bbox_y": bbox[1],
-        "bbox_z": bbox[2],
+        "dims_x": dims[0],
+        "dims_y": dims[1],
+        "dims_z": dims[2],
         "fs_path": str(file_path),
         "fs_path_scaled": str(scaled_model_path) if output.misscaled else None,
     }
@@ -269,9 +280,9 @@ def reset_metadata():
         UPDATE assets SET
             misscaled = NULL, 
             misscaling_type = NULL,
-            bbox_x = NULL,
-            bbox_y = NULL,
-            bbox_z = NULL,
+            dims_x = NULL,
+            dims_y = NULL,
+            dims_z = NULL,
             correction_factor = NULL,
             metadata_version = NULL,
             last_updated = NULL,
