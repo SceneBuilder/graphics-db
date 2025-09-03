@@ -20,6 +20,7 @@ from typing import Literal
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 from pydantic_ai import Agent
+from pydantic_ai.messages import BinaryContent
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.openai import OpenAIProvider
@@ -35,8 +36,9 @@ from graphics_db_server.core.config import (
 from graphics_db_server.logging import logger
 from graphics_db_server.tools.read_file import read_media_file
 from graphics_db_server.utils.geometry import get_glb_dimensions
-from graphics_db_server.utils.thumbnail import generate_thumbnail_from_glb
+from graphics_db_server.utils.pai import transform_paths_to_binary
 from graphics_db_server.utils.scale_validation import scale_glb_model
+from graphics_db_server.utils.thumbnail import generate_thumbnail_from_glb
 
 # Configuration
 DB_FILE = "graphics_db_extra_index.db"
@@ -164,6 +166,7 @@ def generate_thumbnails(uuid: str, path: str | Path, thumb_dir: Path) -> list[st
 class ScaleAnalysisInput(BaseModel):
     thumbnail_paths: list[str]
     question: str | None = None
+    prompt: str | None = None
 
 
 class ScaleAnalysisOutput(BaseModel):
@@ -186,7 +189,7 @@ system_prompt = (
     "Your job is to check if the given 3D assets have realistic sizes that are consistent with "
     "the typical sizes of respective objects in the real world. "
     "\nYou will be given paths to thumbnail images of the object, as well as the 3D dimensions. "
-    "(If given image paths, please use `read_media_file(filepath: str)` function to first see all of the images.) "
+    "(If given image paths, please ALWAYS see all of the images first by using `read_media_file(filepath: str)`.) "
     "A common cause of error is the use of non-meter length unit such as mm or cm, "
     "despite GLTF specifications that mandate meter units. "
     "In this case, it is easy to deduce the correct scale—by simply dividing the "
@@ -195,7 +198,7 @@ system_prompt = (
     "\nPlease classify whether the object is misscaled, the type of misccaling (mm, cm, 10x, or arbitrary), "
     "and a 'correction factor' that must be applied to restore the asset to the correct scale. "
     "The correction factor is will be multiplied to the asset, so if you want to size it down, provide a number smaller than 1. "
-    "Additinoally, please output a description of what object you are looking at.\n"
+    "Additionally, please output a description of what object you are looking at.\n"
     "Finally, please output a rationale explaining why you chose to classify it as misscaled or not, and your reasoning behind the correction factor."
 )
 # NOTE can include: output response example
@@ -208,17 +211,22 @@ scale_analysis_agent = Agent(
     tools=[read_media_file],
 )
 
+
 @scale_analysis_agent.system_prompt
 async def add_inputs(ctx: RunContext[ScaleAnalysisInput]) -> str:
+    if not hasattr(ctx.deps, "thumbnail_paths"):
+        # return None  # ? Problematic? → Yes.
+        return ""
     return f"Paths to thumbnails:\n {ctx.deps.thumbnail_paths}"
 
 
 def calc_metadata(file_path: Path, thumbnail_paths: list[Path] | None = None) -> dict:
     """ """
+    uuid = file_path.stem
     _, dims, _ = get_glb_dimensions(file_path)
 
     user_prompt = (
-        f"**Asset {file_path.stem}**:",
+        f"**Asset {uuid}**:",
         f"Dimensions: {[round(e, 2) for e in dims]}",
         "Please analyze this 3D asset.",
     )
@@ -231,28 +239,37 @@ def calc_metadata(file_path: Path, thumbnail_paths: list[Path] | None = None) ->
         f"- Dimensions if scaled down by 1,000: {[round(e / 1000, 2) for e in dims]}",
     )
     extra_info = "\n".join(extra_info)
-    question = "Are you able to see the thumbnail images?"
-    inputs = ScaleAnalysisInput(
-        thumbnail_paths=thumbnail_paths, question=question if DEBUG else None
-    )
+    # question = "Are you able to see the thumbnail images?"  # DEBUG
+    # inputs = ScaleAnalysisInput(
+    #     thumbnail_paths=thumbnail_paths, question=question if DEBUG else None
+    # )  # ORIG
+    thumbnail_contents: list[BinaryContent] = transform_paths_to_binary(thumbnail_paths)  # ALT
+    inputs = thumbnail_contents  # TEMP
     if DEBUG:
-        logger.debug(f"Asset [{file_path.stem}] Inputs: {inputs}")
-        logger.debug(f"Asset [{file_path.stem}] User Prompt: {user_prompt + extra_info}")
+        logger.debug(f"Asset [{uuid}] Inputs: {inputs}")
+        logger.debug(f"Asset [{uuid}] User Prompt: {user_prompt + extra_info}")
 
-    response = scale_analysis_agent.run_sync(user_prompt + extra_info, deps=inputs)
+    # response = scale_analysis_agent.run_sync(user_prompt + extra_info, deps=inputs)  # ORIG
+    response = scale_analysis_agent.run_sync(
+        thumbnail_contents + [user_prompt + extra_info]
+    )  # ALT
     output: ScaleAnalysisOutput = response.output
 
     if DEBUG:
-        logger.debug(f"Asset [{file_path.stem}] Object Description: {output.object_description}")
-        logger.debug(f"Asset [{file_path.stem}] Rationale: {output.rationale}")
+        logger.debug(f"Asset [{uuid}] Object Description: {output.object_description}")
+        logger.debug(f"Asset [{uuid}] Rationale: {output.rationale}")
 
     sf = output.correction_factor  # scaling factor
     if sf is not None and not math.isclose(sf, 1, abs_tol=0.1):
-        scaled_model_path = file_path.with_stem(f"{file_path.stem}_scaled")
+        scaled_model_path = file_path.with_stem(f"{uuid}_scaled")
         success = scale_glb_model(file_path, scaled_model_path, sf, backend="blender")
         if not success:
             return "failure"
-        
+
+    if DEBUG:
+        logger.debug(f"Asset [{uuid}] Output Scale: {sf}")
+        logger.debug(f"Asset [{uuid}] Output Dimensions: {[round(e * sf, 2) for e in dims]}")
+
     if sf is None and output.misscaled:
         return "failure"
         # NOTE: This might be cases where dims are zeros, e.g., due to being non-surface photogrammetry
