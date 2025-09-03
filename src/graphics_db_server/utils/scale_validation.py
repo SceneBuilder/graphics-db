@@ -178,18 +178,6 @@ def scale_glb_model_pyvista(
         return False
 
 
-def get_override(area_type, region_type):
-    for area in bpy.context.screen.areas: 
-        if area.type == area_type:             
-            for region in area.regions:                 
-                if region.type == region_type:                    
-                    override = {'area': area, 'region': region} 
-                    return override
-    #error message if the area or region wasn't found
-    raise RuntimeError("Wasn't able to find", region_type," in area ", area_type,
-                        "\n Make sure it's open while executing script.")
-
-
 def scale_glb_model_blender(
     input_path: str, output_path: str, scale_factor: float
 ) -> bool:
@@ -246,42 +234,35 @@ def scale_glb_model_blender(
         # Set an active object for context-sensitive operations
         bpy.context.view_layer.objects.active = imported_objects[0]
 
-        # ALT1
         # Set the 3D Cursor's location to the world center (0, 0, 0)
         bpy.context.scene.cursor.location = (0, 0, 0)
         # Set the pivot point to '3D Cursor'
         bpy.context.scene.tool_settings.transform_pivot_point = 'CURSOR'
 
-        # ALT1.1
-        # Get the 3D Viewport context
-        area = next(a for a in bpy.context.screen.areas if a.type == 'VIEW_3D')
-        override = {
-            "area": area,
-            "region": next(r for r in area.regions if r.type == 'WINDOW'),
-            "window": bpy.context.window,
-            "screen": bpy.context.screen,
-        }
-
-        # # ALT2
-        # matrix = imported_objects[0].matrix_world.to_3x3()
-
-        # # ALT3
-        # #we need to override the context of our operator    
-        # override = get_override( 'VIEW_3D', 'WINDOW' )
-        # bpy.context.tool_settings.transform_pivot_point = "CURSOR" 
+        # Find the 3D Viewport area for context override
+        area = next((a for a in bpy.context.screen.areas if a.type == 'VIEW_3D'), None)
+        region = next((r for r in area.regions if r.type == 'WINDOW'), None)
+        
+        if not area:
+            logger.error("No 3D Viewport area found in current context")
+            return False
+        
+        logger.info(f"Area: {area}")
 
         logger.debug(f"Scaling selected objects by a factor of {scale_factor}.")
-        # bpy.ops.transform.resize(value=(scale_factor, scale_factor, scale_factor))  # ORIG, ALT1
-        bpy.ops.transform.resize(override, value=(scale_factor, scale_factor, scale_factor))  # ALT1.1
-        # bpy.ops.transform.resize(value=(scale_factor, scale_factor, scale_factor), orient_matrix=matrix)  # ALT2
-        # bpy.ops.transform.resize(override, value=(scale_factor, scale_factor, scale_factor))  # ALT3
+        
+        # Use the modern Blender 4.0+ context override approach
+        with bpy.context.temp_override(area=area, region=region):
+            # # TEMP
+            # bpy.context.scene.cursor.location = (0, 0, 0)
+            # # Set the pivot point to '3D Cursor'
+            # bpy.context.scene.tool_settings.transform_pivot_point = 'CURSOR'
+            
+            bpy.ops.transform.resize(value=(scale_factor, scale_factor, scale_factor))
 
         # Apply the scale transformation to bake it into the mesh data
         logger.debug("Applying scale transformation.")
         bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
-        
-        # Restore the pivot point back to default
-        # bpy.context.scene.tool_settings.transform_pivot_point = 'MEDIAN_POINT'  # not sure
 
         # Export to GLB, ensuring only the modified objects are exported
         logger.debug(f"Exporting scaled GLB to: {output_path}")
