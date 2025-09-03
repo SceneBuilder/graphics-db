@@ -247,7 +247,7 @@ def scale_glb_model_blender(
             logger.error("No 3D Viewport area found in current context")
             return False
         
-        logger.info(f"Area: {area}")
+        # logger.debug(f"Area: {area}")  # DEBUG
 
         logger.debug(f"Scaling selected objects by a factor of {scale_factor}.")
         

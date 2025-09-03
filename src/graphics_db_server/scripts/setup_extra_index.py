@@ -244,10 +244,10 @@ def calc_metadata(file_path: Path, thumbnail_paths: list[Path] | None = None) ->
     #     thumbnail_paths=thumbnail_paths, question=question if DEBUG else None
     # )  # ORIG
     thumbnail_contents: list[BinaryContent] = transform_paths_to_binary(thumbnail_paths)  # ALT
-    inputs = thumbnail_contents  # TEMP
+    inputs = thumbnail_paths  # TEMP
     if DEBUG:
         logger.debug(f"Asset [{uuid}] Inputs: {inputs}")
-        logger.debug(f"Asset [{uuid}] User Prompt: {user_prompt + extra_info}")
+        logger.debug(f"Asset [{uuid}] \nUser Prompt: {user_prompt + extra_info}")
 
     # response = scale_analysis_agent.run_sync(user_prompt + extra_info, deps=inputs)  # ORIG
     response = scale_analysis_agent.run_sync(
