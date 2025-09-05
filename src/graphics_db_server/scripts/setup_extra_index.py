@@ -216,8 +216,8 @@ def calc_optimal_scaling_factor(
 
 
 # model = GoogleModel("gemini-2.5-flash")
-# model = OpenAIChatModel("gpt-5-mini")
-model = OpenAIChatModel("gpt-5-nano")
+model = OpenAIChatModel("gpt-5-mini")
+# model = OpenAIChatModel("gpt-5-nano")  # NOTE: not good enough.
 # client = AsyncOpenAI(base_url=VLM_PROVIDER_BASE_URL, api_key="empty")
 # model = OpenAIChatModel(
 #     VLM_MODEL_NAME,
@@ -322,6 +322,11 @@ def calc_metadata(file_path: Path, thumbnail_paths: list[Path] | None = None) ->
         if DEBUG:
             logger.debug(f"Asset [{uuid}] Output Correction Factor: {sf}")
             logger.debug(f"Asset [{uuid}] Output Dimensions: {[round(e * sf, 2) for e in dims]}")
+    elif sf is not None and math.isclose(sf, 1, abs_tol=0.1):
+        # NOTE: Even though the model thinks the object is mis-scaled, the correction factor
+        #       is not significant enough, so we ignore it and mark the object well-scaled. 
+        output.misscaled = False
+        output.misscaling_type = "N/A"
 
     if sf is None and output.misscaled:
         return "failure"
