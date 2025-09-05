@@ -1,3 +1,8 @@
+# IDEA: Just have VLM output ideal size in structured text, and then do downstream calculation
+#       (classification between cm, mm, 0.1x, arbitrary) as well as optimal scaling calculation
+#       with a traditional pipeline. This may allow much faster and much more efficient execution.
+#       Plus, concatenating thumbnail images can be a good idea — depending on accuracy & cost.
+
 # TODO: make sure the conversation history does not accumulate.
 
 """
@@ -180,41 +185,37 @@ class ScaleAnalysisOutput(BaseModel):
     ideal_dimensions: str
     reasoning: str
     misscaled: bool
-    # misscaling_type: Literal["mm", "cm", "10x", "arbitrary"]
-    # misscaling_type: Literal["mm", "cm", "arbitrary"]
     misscaling_type: Literal["mm", "cm", "arbitrary", "N/A"]
     correction_factor: float | None = None
 
 
 def calc_optimal_scaling_factor(
-    original_dims: list[float, float, float], 
-    desired_dims: list[float, float, float]
+    original_dims: list[float, float, float], desired_dims: list[float, float, float]
 ) -> float:
     """
     Calculates the optimal scaling factor given original and desired dimensions.
-    
+
     Args:
         original_dims: Original dimensions as [x, y, z] list
         desired_dims: Desired dimensions as [x, y, z] list
-        
+
     Returns:
         float: The optimal scaling factor to apply
     """
     # Calculate scaling factors for each dimension
     scale_factors = [
-        desired_dims[i] / original_dims[i] 
-        for i in range(3) 
-        if original_dims[i] != 0
+        desired_dims[i] / original_dims[i] for i in range(3) if original_dims[i] != 0
     ]
-    
+
     if not scale_factors:
         return 1.0
-    
+
     # Use uniform scaling - take the geometric mean for balanced scaling
-    import math
     geometric_mean = math.pow(math.prod(scale_factors), 1.0 / len(scale_factors))
 
-    logger.debug(f"[tool] original_dims={original_dims}, desired_dims={desired_dims}, scaling_factor={round(geometric_mean, 5)}")
+    logger.debug(
+        f"[tool] original_dims={original_dims}, desired_dims={desired_dims}, scaling_factor={round(geometric_mean, 5)}"
+    )
     return round(geometric_mean, 5)
 
 
@@ -257,7 +258,6 @@ system_prompt = (
 scale_analysis_agent = Agent(
     model,
     system_prompt=system_prompt,
-    # deps_type=ScaleAnalysisInput,
     output_type=ScaleAnalysisOutput,
     tools=[calc_optimal_scaling_factor],
 )
@@ -293,19 +293,15 @@ def calc_metadata(file_path: Path, thumbnail_paths: list[Path] | None = None) ->
     )
     extra_info = "\n".join(extra_info)
     # question = "Are you able to see the thumbnail images?"  # DEBUG
-    # inputs = ScaleAnalysisInput(
-    #     thumbnail_paths=thumbnail_paths, question=question if DEBUG else None
-    # )  # ORIG
-    thumbnail_contents: list[BinaryContent] = transform_paths_to_binary(thumbnail_paths)  # ALT
+    thumbnail_contents: list[BinaryContent] = transform_paths_to_binary(thumbnail_paths)
     inputs = thumbnail_paths  # TEMP
     if DEBUG:
         logger.debug(f"Asset [{uuid}] Inputs: {inputs}")
         logger.debug(f"Asset [{uuid}] \nUser Prompt: {user_prompt + extra_info}")
 
-    # response = scale_analysis_agent.run_sync(user_prompt + extra_info, deps=inputs)  # ORIG
     response = scale_analysis_agent.run_sync(
         thumbnail_contents + [user_prompt + extra_info]
-    )  # ALT
+    )
     output: ScaleAnalysisOutput = response.output
 
     if DEBUG:
@@ -324,10 +320,12 @@ def calc_metadata(file_path: Path, thumbnail_paths: list[Path] | None = None) ->
 
         if DEBUG:
             logger.debug(f"Asset [{uuid}] Output Correction Factor: {sf}")
-            logger.debug(f"Asset [{uuid}] Output Dimensions: {[round(e * sf, 2) for e in dims]}")
+            logger.debug(
+                f"Asset [{uuid}] Output Dimensions: {[round(e * sf, 2) for e in dims]}"
+            )
     elif sf is not None and math.isclose(sf, 1, abs_tol=0.1):
         # NOTE: Even though the model thinks the object is mis-scaled, the correction factor
-        #       is not significant enough, so we ignore it and mark the object well-scaled. 
+        #       is not significant enough, so we ignore it and mark the object well-scaled.
         output.misscaled = False
         output.misscaling_type = "N/A"
 
