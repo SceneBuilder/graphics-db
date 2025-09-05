@@ -1,3 +1,6 @@
+# TODO: setup logfire to debug timing.
+# TODO: make sure the conversation history does not accumulate.
+
 """
 This script sets up an additional SQLite-based DB for metadata interaction,
 such as computing 3D bounding box, analyzing re-scaling parameters, thumbnails,
@@ -170,45 +173,90 @@ class ScaleAnalysisInput(BaseModel):
 
 
 class ScaleAnalysisOutput(BaseModel):
+    object_description: str
+    ideal_dimensions: str
+    reasoning: str
     misscaled: bool
-    misscaling_type: Literal["mm", "cm", "10x", "arbitrary"]
+    # misscaling_type: Literal["mm", "cm", "10x", "arbitrary"]
+    # misscaling_type: Literal["mm", "cm", "arbitrary"]
+    misscaling_type: Literal["mm", "cm", "arbitrary", "N/A"]
     correction_factor: float | None = None
-    object_description: str | None = None
-    rationale: str | None = None
+
+
+def calc_optimal_scaling_factor(
+    original_dims: list[float, float, float], 
+    desired_dims: list[float, float, float]
+) -> float:
+    """
+    Calculates the optimal scaling factor given original and desired dimensions.
+    
+    Args:
+        original_dims: Original dimensions as [x, y, z] list
+        desired_dims: Desired dimensions as [x, y, z] list
+        
+    Returns:
+        float: The optimal scaling factor to apply
+    """
+    # Calculate scaling factors for each dimension
+    scale_factors = [
+        desired_dims[i] / original_dims[i] 
+        for i in range(3) 
+        if original_dims[i] != 0
+    ]
+    
+    if not scale_factors:
+        return 1.0
+    
+    # Use uniform scaling - take the geometric mean for balanced scaling
+    import math
+    geometric_mean = math.pow(math.prod(scale_factors), 1.0 / len(scale_factors))
+
+    logger.debug(f"[tool] original_dims={original_dims}, desired_dims={desired_dims}, scaling_factor={round(geometric_mean, 5)}")
+    return round(geometric_mean, 5)
 
 
 # model = GoogleModel("gemini-2.5-flash")
-client = AsyncOpenAI(base_url=VLM_PROVIDER_BASE_URL, api_key="empty")
-model = OpenAIChatModel(
-    VLM_MODEL_NAME,
-    provider=OpenAIProvider(base_url=VLM_PROVIDER_BASE_URL, api_key="EMPTY"),
-)
+# model = OpenAIChatModel("gpt-5-mini")
+model = OpenAIChatModel("gpt-5-nano")
+# client = AsyncOpenAI(base_url=VLM_PROVIDER_BASE_URL, api_key="empty")
+# model = OpenAIChatModel(
+#     VLM_MODEL_NAME,
+#     provider=OpenAIProvider(base_url=VLM_PROVIDER_BASE_URL, api_key="EMPTY"),
+# )
 system_prompt = (
     "You are an AI model that is in charge of the quality control of "
-    "3d assets that sometimes have an incorrect scale. "
-    "Your job is to check if the given 3D assets have realistic sizes that are consistent with "
-    "the typical sizes of respective objects in the real world. "
+    "3d assets that sometimes have an incorrect scale.\n"
+    "Your job is to check whether or not a given 3D asset has realistic dimensions that "
+    "are consistent with the typical sizes of respective objects in the real world.\n"
+    "For example, it is unreasonable for a desk lamp to be [4.0, 3.0, 4.0] m, since in the real world, "
+    "a desk lamp would normally not be larger than ~[0.3, 0.5, 0.3] m."
     "\nYou will be given paths to thumbnail images of the object, as well as the 3D dimensions. "
-    "(If given image paths, please ALWAYS see all of the images first by using `read_media_file(filepath: str)`.) "
+    "(If given image paths, please ALWAYS see all of the images by using `read_media_file(filepath: str)`.) "
+    "First, please output a description of what object you are looking at.\n"
+    "Then, please output what you think as the ideal dimensions of the object.\n"
+    "Note: A good rule to follow is to think of what the most typical example of a real-world object that belongs to the, "
+    "same category as the asset, such as a sofa, and then to think of what the physicall plausible dimensions of a sofa would be.\n"
+    "Now, please use the `calc_optimal_scaling_factor(original_dims=[float, float, float], desired_dims=[float, float, float]) -> float` tool.\n"
+    "Then, please output your reasoning and analysis in comparing the original dimensions of the object to the ideal dimensions.\n"
+    "Then, please classify whether the object is misscaled and the type of misccaling (mm, cm, 10x, or arbitrary)."
+    "Finally, if the object is misscaled, please output a 'correction factor'—a scaling factor that must be applied to restore the asset to a correct scale.\n"
     "A common cause of error is the use of non-meter length unit such as mm or cm, "
     "despite GLTF specifications that mandate meter units. "
     "In this case, it is easy to deduce the correct scale—by simply dividing the "
     "dimensions by 100 or 1,000 respectively. "
     "There are also assets that are arbitrarily misscaled. "
-    "\nPlease classify whether the object is misscaled, the type of misccaling (mm, cm, 10x, or arbitrary), "
-    "and a 'correction factor' that must be applied to restore the asset to the correct scale. "
-    "The correction factor is will be multiplied to the asset, so if you want to size it down, provide a number smaller than 1. "
-    "Additionally, please output a description of what object you are looking at.\n"
-    "Finally, please output a rationale explaining why you chose to classify it as misscaled or not, and your reasoning behind the correction factor."
+    # "Be very careful to assure that the final dimensions have physically plausible sizes: not too small, and not too large.\n"
+    "Please assure that the final dimensions have physically plausible sizes: not too small, and not too large.\n"
+    "Note: the correction factor is to be *multiplied* to the asset, so if you want to size down, provide a number smaller than 1, and vice versa. "
 )
 # NOTE can include: output response example
 # NOTE can run through claude's prompt optimizer
 scale_analysis_agent = Agent(
     model,
     system_prompt=system_prompt,
-    deps_type=ScaleAnalysisInput,
+    # deps_type=ScaleAnalysisInput,
     output_type=ScaleAnalysisOutput,
-    tools=[read_media_file],
+    tools=[calc_optimal_scaling_factor],
 )
 
 
@@ -227,16 +275,18 @@ def calc_metadata(file_path: Path, thumbnail_paths: list[Path] | None = None) ->
 
     user_prompt = (
         f"**Asset {uuid}**:",
-        f"Dimensions: {[round(e, 2) for e in dims]}",
+        f"Dimensions: {[round(e, 2) for e in dims]} m",
         "Please analyze this 3D asset.",
     )
     user_prompt = "\n".join(user_prompt)
     extra_info = (
         "\nExtra information:",
-        f"- Larger than than 100 m: {max(dims) > 100}",
-        f"- Dimensions if scaled down by 100: {[round(e / 100, 2) for e in dims]}",
-        f"- Larger than 1,000 m: {max(dims) > 1000}",
-        f"- Dimensions if scaled down by 1,000: {[round(e / 1000, 2) for e in dims]}",
+        # f"- Larger than than 100 m (e.g., originally in cm): {max(dims) > 100}",
+        f"- Larger than than 100 m (e.g., potentially in cm): {max(dims) > 100}",
+        f"- Dimensions if scaled by 0.01: {[round(e / 100, 2) for e in dims]} m",
+        # f"- Larger than 1000 m (e.g., originally in mm): {max(dims) > 1000}",
+        f"- Larger than 1000 m (e.g., potentially in mm): {max(dims) > 1000}",
+        f"- Dimensions if scaled by 0.001: {[round(e / 1000, 2) for e in dims]} m",
     )
     extra_info = "\n".join(extra_info)
     # question = "Are you able to see the thumbnail images?"  # DEBUG
@@ -257,7 +307,10 @@ def calc_metadata(file_path: Path, thumbnail_paths: list[Path] | None = None) ->
 
     if DEBUG:
         logger.debug(f"Asset [{uuid}] Object Description: {output.object_description}")
-        logger.debug(f"Asset [{uuid}] Rationale: {output.rationale}")
+        logger.debug(f"Asset [{uuid}] Ideal Dimensions: {output.reasoning}")
+        logger.debug(f"Asset [{uuid}] Reasoning: {output.reasoning}")
+        logger.debug(f"Asset [{uuid}] Misscaled: {output.misscaled}")
+        logger.debug(f"Asset [{uuid}] Misscaling Type: {output.misscaling_type}")
 
     sf = output.correction_factor  # scaling factor
     if sf is not None and not math.isclose(sf, 1, abs_tol=0.1):
@@ -266,9 +319,9 @@ def calc_metadata(file_path: Path, thumbnail_paths: list[Path] | None = None) ->
         if not success:
             return "failure"
 
-    if DEBUG:
-        logger.debug(f"Asset [{uuid}] Output Scale: {sf}")
-        logger.debug(f"Asset [{uuid}] Output Dimensions: {[round(e * sf, 2) for e in dims]}")
+        if DEBUG:
+            logger.debug(f"Asset [{uuid}] Output Correction Factor: {sf}")
+            logger.debug(f"Asset [{uuid}] Output Dimensions: {[round(e * sf, 2) for e in dims]}")
 
     if sf is None and output.misscaled:
         return "failure"
@@ -360,7 +413,8 @@ def compute_metadata(version: int):
                 pbar.set_postfix_str(f"SKIPPING missing file: {uuid}", refresh=True)
 
             pbar.update(1)
-            if pbar.n % BATCH_SIZE == 0:  # save periodically
+            # if pbar.n % BATCH_SIZE == 0:  # save periodically
+            if True:  # save at every asset
                 conn.commit()
 
     conn.commit()
