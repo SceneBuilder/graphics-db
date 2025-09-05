@@ -1,4 +1,3 @@
-# TODO: setup logfire to debug timing.
 # TODO: make sure the conversation history does not accumulate.
 
 """
@@ -20,6 +19,7 @@ from pathlib import Path
 from typing import Literal
 
 # import tqdm
+import logfire
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 from pydantic_ai import Agent
@@ -51,6 +51,9 @@ BATCH_SIZE = 1000
 
 DEBUG = True
 # DEBUG = False
+
+logfire.configure(service_name="graphics-db")
+logfire.instrument_pydantic_ai()
 
 
 def setup_database():
