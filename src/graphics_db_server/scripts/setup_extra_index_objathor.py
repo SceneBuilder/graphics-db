@@ -1,6 +1,14 @@
 """
 Helper functions for extracting scale analysis data from ObjaTHOR JSON files
 and integrating with the graphics DB extra index setup.
+
+NOTE: It seems plausible that `scale` attribute, especially if annotated by gpt 3.5,
+      contains significant errors. However, the `size` attribute seems better, and
+      we can utilize `calc_optimal_scaling_factor()` to redo SF calculation.
+NOTE: The `size` attribute seems to assume z-up orientation, while bounding box
+      suggests the model is in y-up orientation—so when feeding into `calc_optimal_scaling_factor`,
+      it may be required to either assume the most common transformation, or heuristically mix-match
+      the closest values, and report its occurrence in logs/console for potential analysis. 
 """
 
 import json
