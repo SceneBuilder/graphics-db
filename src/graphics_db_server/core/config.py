@@ -21,6 +21,10 @@ LOCAL_FS_PATHS = {
     "Objaverse": "./data/mini_objaverse"  # debug
     # "Objaverse": "/media/ycho358/Expansion/.objaverse"  # prod
 }
+OBJATHOR_ANNO_JSON_PATH = "~/.objathor-assets/2023_09_23/annotations.json"  # set this to your ObjaTHOR JSON file path
+
+# Data validation
+# Objects
 # VALIDATE_SCALE = True
 VALIDATE_SCALE = False
 SCALE_RESOLUTION_STRATEGY = "reject"  # options: ["reject", "rescale"]

@@ -49,6 +49,10 @@ from graphics_db_server.utils.pai import transform_paths_to_binary
 from graphics_db_server.utils.rounding import safe_round
 from graphics_db_server.utils.scale_validation import scale_glb_model
 from graphics_db_server.utils.thumbnail import generate_thumbnail_from_glb
+from graphics_db_server.scripts.setup_extra_index_objathor import (
+    calc_metadata_objathor,
+    objathor_annotation_available,
+)
 
 # Configuration
 DB_FILE = "graphics_db_extra_index.db"
@@ -359,10 +363,22 @@ def calc_metadata(file_path: Path, thumbnail_paths: list[Path] | None = None) ->
 
 
 async def calc_metadata_async(
-    file_path: Path, thumbnail_paths: list[Path] | None = None
+    file_path: Path,
+    thumbnail_paths: list[Path] | None = None,
+    use_external: bool = False,
 ) -> dict:
     """Async version of calc_metadata function."""
     uuid = file_path.stem
+
+    # Use ObjaTHOR data if requested
+    if use_external:
+        if objathor_annotation_available(uuid):
+            metadata = await calc_metadata_objathor(file_path, ROUND_DIGITS)
+            if metadata != "failure":  # success
+                return metadata
+        else:
+            pass  # Fall back to VLM analysis if ObjaTHOR data not available
+
     _, dims, _ = get_glb_dimensions(file_path)
 
     user_prompt = (
@@ -470,24 +486,30 @@ def reset_metadata():
     logger.info("Metadata has been reset.")
 
 
-def compute_metadata(version: int, max_concurrent: int = MAX_CONCURRENT):
+def compute_metadata(
+    version: int, max_concurrent: int = MAX_CONCURRENT, use_external: bool = False
+):
     """
     Computes and updates metadata for assets that are out of date using async processing.
 
     Args:
         version (int): The version of the metadata logic to apply.
         max_concurrent (int): Maximum number of concurrent LLM API calls.
+        use_external (bool): If True, attempt to use external annotation before falling back to VLM analysis.
     """
-    asyncio.run(_compute_metadata_async(version, max_concurrent))
+    asyncio.run(_compute_metadata_async(version, max_concurrent, use_external))
 
 
-async def _compute_metadata_async(version: int, max_concurrent: int = MAX_CONCURRENT):
+async def _compute_metadata_async(
+    version: int, max_concurrent: int = MAX_CONCURRENT, use_external: bool = False
+):
     """
     Internal async function that performs the actual metadata computation.
 
     Args:
         version (int): The version of the metadata logic to apply.
         max_concurrent (int): Maximum number of concurrent LLM API calls.
+        use_external (bool): If True, attempt to use external annotation before falling back to VLM analysis.
     """
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -523,7 +545,9 @@ async def _compute_metadata_async(version: int, max_concurrent: int = MAX_CONCUR
                 thumbnail_paths = generate_thumbnails(uuid, path_str, THUMBNAIL_DIR)
                 thumbnail_paths = [str(path) for path in thumbnail_paths]  # TEMP
                 metadata = await calc_metadata_async(
-                    file_path, thumbnail_paths=thumbnail_paths
+                    file_path,
+                    thumbnail_paths=thumbnail_paths,
+                    use_external=use_external,
                 )
 
                 if metadata == "failure":
@@ -624,7 +648,8 @@ def main():
         reset_metadata()
     for source_name, local_dir in LOCAL_FS_PATHS.items():
         setup_index(Path(local_dir))
-        compute_metadata(METADATA_VERSION)
+        # compute_metadata(METADATA_VERSION)
+        compute_metadata(METADATA_VERSION, use_external=True)
 
 
 if __name__ == "__main__":
