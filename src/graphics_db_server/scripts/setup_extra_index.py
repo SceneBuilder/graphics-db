@@ -46,6 +46,7 @@ from graphics_db_server.logging import logger
 from graphics_db_server.tools.read_file import read_media_file
 from graphics_db_server.utils.geometry import get_glb_dimensions
 from graphics_db_server.utils.pai import transform_paths_to_binary
+from graphics_db_server.utils.rounding import safe_round
 from graphics_db_server.utils.scale_validation import scale_glb_model
 from graphics_db_server.utils.thumbnail import generate_thumbnail_from_glb
 
@@ -55,6 +56,7 @@ THUMBNAIL_DIR = Path("/media/ycho358/YunhoStrgExt/graphics_db_thumbnails")
 METADATA_VERSION = 1  # NOTE: increment with logic changes
 BATCH_SIZE = 1000  # for periodic DB commits
 MAX_CONCURRENT = 100  # for VLM calls
+ROUND_DIGITS = 3
 
 DEBUG = True
 # DEBUG = False
@@ -85,11 +87,12 @@ def setup_database():
         "dims_x": "REAL",
         "dims_y": "REAL",
         "dims_z": "REAL",
+        "scaling_factor": "REAL",
         "metadata_version": "INTEGER",
         "last_updated": "TEXT",
         "thumbnail_paths": "TEXT",
         "fs_path": "TEXT",
-        "fs_path_scaled": "TEXT",
+        "fs_path_rescaled": "TEXT",
         "rescaled_by": "TEXT",
     }
 
@@ -339,16 +342,19 @@ def calc_metadata(file_path: Path, thumbnail_paths: list[Path] | None = None) ->
     return {
         "misscaled": 1 if output.misscaled else 0,
         "misscaling_type": output.misscaling_type,
-        "dims_x": dims[0],
-        "dims_y": dims[1],
-        "dims_z": dims[2],
+        "dims_x": safe_round(dims[0], ROUND_DIGITS),
+        "dims_y": safe_round(dims[1], ROUND_DIGITS),
+        "dims_z": safe_round(dims[2], ROUND_DIGITS),
+        "scaling_factor": safe_round(sf, ROUND_DIGITS) if output.misscaled else -1,
         "fs_path": str(file_path),
-        "fs_path_scaled": str(scaled_model_path) if output.misscaled else None,
+        "fs_path_rescaled": str(scaled_model_path) if output.misscaled else None,
         "rescaled_by": "graphics-db",
     }
 
 
-async def calc_metadata_async(file_path: Path, thumbnail_paths: list[Path] | None = None) -> dict:
+async def calc_metadata_async(
+    file_path: Path, thumbnail_paths: list[Path] | None = None
+) -> dict:
     """Async version of calc_metadata function."""
     uuid = file_path.stem
     _, dims, _ = get_glb_dimensions(file_path)
@@ -414,11 +420,12 @@ async def calc_metadata_async(file_path: Path, thumbnail_paths: list[Path] | Non
     return {
         "misscaled": 1 if output.misscaled else 0,
         "misscaling_type": output.misscaling_type,
-        "dims_x": dims[0],
-        "dims_y": dims[1],
-        "dims_z": dims[2],
+        "dims_x": safe_round(dims[0], ROUND_DIGITS),
+        "dims_y": safe_round(dims[1], ROUND_DIGITS),
+        "dims_z": safe_round(dims[2], ROUND_DIGITS),
+        "scaling_factor": safe_round(sf, ROUND_DIGITS) if output.misscaled else -1,
         "fs_path": str(file_path),
-        "fs_path_scaled": str(scaled_model_path) if output.misscaled else None,
+        "fs_path_rescaled": str(scaled_model_path) if output.misscaled else None,
         "rescaled_by": "graphics-db",
     }
 
@@ -438,12 +445,13 @@ def reset_metadata():
             dims_x = NULL,
             dims_y = NULL,
             dims_z = NULL,
+            scaling_factor = NULL,
             correction_factor = NULL,
             metadata_version = NULL,
             last_updated = NULL,
-            thumbnail_paths = NULL
-            fs_path = NULL
-            fs_path_scaled = NULL
+            thumbnail_paths = NULL,
+            fs_path = NULL,
+            fs_path_rescaled = NULL,
             rescaled_by = NULL
     """)
     conn.commit()
@@ -490,7 +498,7 @@ async def _compute_metadata_async(version: int, max_concurrent: int = MAX_CONCUR
 
     # Create semaphore to limit concurrent LLM calls
     semaphore = asyncio.Semaphore(max_concurrent)
-    
+
     async def process_single_asset(uuid: str, path_str: str) -> tuple[str, dict | str]:
         """Process a single asset with concurrency control."""
         async with semaphore:
@@ -498,22 +506,24 @@ async def _compute_metadata_async(version: int, max_concurrent: int = MAX_CONCUR
             if not file_path.exists():
                 logger.warning(f"SKIPPING missing file: {uuid}")
                 return uuid, "missing_file"
-            
+
             try:
                 thumbnail_paths = generate_thumbnails(uuid, path_str, THUMBNAIL_DIR)
                 thumbnail_paths = [str(path) for path in thumbnail_paths]  # TEMP
-                metadata = await calc_metadata_async(file_path, thumbnail_paths=thumbnail_paths)
-                
+                metadata = await calc_metadata_async(
+                    file_path, thumbnail_paths=thumbnail_paths
+                )
+
                 if metadata == "failure":
                     logger.warning(f"{uuid}: metadata generation failure.")
                     return uuid, "failure"
-                
+
                 # Add additional metadata fields
                 metadata["thumbnail_paths"] = json.dumps(thumbnail_paths)
                 metadata["metadata_version"] = version
                 metadata["last_updated"] = datetime.datetime.now().isoformat()
                 metadata["rescaled_by"] = "graphics-db"
-                
+
                 return uuid, metadata
             except Exception as e:
                 logger.error(f"Error processing asset {uuid}: {e}")
@@ -521,14 +531,14 @@ async def _compute_metadata_async(version: int, max_concurrent: int = MAX_CONCUR
 
     # Create tasks for all assets
     tasks = [process_single_asset(uuid, path_str) for uuid, path_str in target_assets]
-    
+
     # Process all tasks concurrently with progress bar
     results = []
     with tqdm(total=len(tasks), desc=f"Computing metadata (v{version})") as pbar:
         # Process in batches to avoid overwhelming the progress bar
         batch_size = 100
         for i in range(0, len(tasks), batch_size):
-            batch_tasks = tasks[i:i + batch_size]
+            batch_tasks = tasks[i : i + batch_size]
             batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
             results.extend(batch_results)
             pbar.update(len(batch_tasks))
@@ -536,22 +546,22 @@ async def _compute_metadata_async(version: int, max_concurrent: int = MAX_CONCUR
     # Handle database updates
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    
+
     successful_updates = 0
     failed_updates = 0
-    
+
     for result in results:
         if isinstance(result, Exception):
             logger.error(f"Task failed with exception: {result}")
             failed_updates += 1
             continue
-            
+
         uuid, metadata = result
-        
+
         if metadata in ["failure", "missing_file", "error"]:
             failed_updates += 1
             continue
-            
+
         # Update database
         try:
             update_query = f"UPDATE assets SET {', '.join(f'{k} = ?' for k in metadata)} WHERE uuid = ?"
@@ -564,8 +574,10 @@ async def _compute_metadata_async(version: int, max_concurrent: int = MAX_CONCUR
 
     conn.commit()
     conn.close()
-    
-    logger.info(f"Metadata computation complete. Success: {successful_updates}, Failed: {failed_updates}")
+
+    logger.info(
+        f"Metadata computation complete. Success: {successful_updates}, Failed: {failed_updates}"
+    )
 
 
 def get_asset_details(uuid_to_check: str) -> dict | None:
