@@ -15,6 +15,7 @@ TODO: Modularize to suit different asset data sources.
 """
 
 import argparse
+import asyncio
 import datetime
 import json
 import math
@@ -52,7 +53,8 @@ from graphics_db_server.utils.thumbnail import generate_thumbnail_from_glb
 DB_FILE = "graphics_db_extra_index.db"
 THUMBNAIL_DIR = Path("/media/ycho358/YunhoStrgExt/graphics_db_thumbnails")
 METADATA_VERSION = 1  # NOTE: increment with logic changes
-BATCH_SIZE = 1000
+BATCH_SIZE = 1000  # for periodic DB commits
+MAX_CONCURRENT = 100  # for VLM calls
 
 DEBUG = True
 # DEBUG = False
@@ -344,6 +346,80 @@ def calc_metadata(file_path: Path, thumbnail_paths: list[Path] | None = None) ->
     }
 
 
+async def calc_metadata_async(file_path: Path, thumbnail_paths: list[Path] | None = None) -> dict:
+    """Async version of calc_metadata function."""
+    uuid = file_path.stem
+    _, dims, _ = get_glb_dimensions(file_path)
+
+    user_prompt = (
+        f"**Asset {uuid}**:",
+        f"Dimensions: {[round(e, 2) for e in dims]} m",
+        "Please analyze this 3D asset.",
+    )
+    user_prompt = "\n".join(user_prompt)
+    extra_info = (
+        "\nExtra information:",
+        # f"- Larger than than 100 m (e.g., originally in cm): {max(dims) > 100}",
+        f"- Larger than than 100 m (e.g., potentially in cm): {max(dims) > 100}",
+        f"- Dimensions if scaled by 0.01: {[round(e / 100, 2) for e in dims]} m",
+        # f"- Larger than 1000 m (e.g., originally in mm): {max(dims) > 1000}",
+        f"- Larger than 1000 m (e.g., potentially in mm): {max(dims) > 1000}",
+        f"- Dimensions if scaled by 0.001: {[round(e / 1000, 2) for e in dims]} m",
+    )
+    extra_info = "\n".join(extra_info)
+    # question = "Are you able to see the thumbnail images?"  # DEBUG
+    thumbnail_contents: list[BinaryContent] = transform_paths_to_binary(thumbnail_paths)
+    inputs = thumbnail_paths  # TEMP
+    if DEBUG:
+        logger.debug(f"Asset [{uuid}] Inputs: {inputs}")
+        logger.debug(f"Asset [{uuid}] \nUser Prompt: {user_prompt + extra_info}")
+
+    response = await scale_analysis_agent.run(
+        thumbnail_contents + [user_prompt + extra_info]
+    )
+    output: ScaleAnalysisOutput = response.output
+
+    if DEBUG:
+        logger.debug(f"Asset [{uuid}] Object Description: {output.object_description}")
+        logger.debug(f"Asset [{uuid}] Ideal Dimensions: {output.reasoning}")
+        logger.debug(f"Asset [{uuid}] Reasoning: {output.reasoning}")
+        logger.debug(f"Asset [{uuid}] Misscaled: {output.misscaled}")
+        logger.debug(f"Asset [{uuid}] Misscaling Type: {output.misscaling_type}")
+
+    sf = output.correction_factor  # scaling factor
+    scaled_model_path = None
+    if sf is not None and not math.isclose(sf, 1, abs_tol=0.1):
+        scaled_model_path = file_path.with_stem(f"{uuid}_scaled")
+        success = scale_glb_model(file_path, scaled_model_path, sf, backend="blender")
+        if not success:
+            return "failure"
+
+        if DEBUG:
+            logger.debug(f"Asset [{uuid}] Output Correction Factor: {sf}")
+            logger.debug(
+                f"Asset [{uuid}] Output Dimensions: {[round(e * sf, 2) for e in dims]}"
+            )
+    elif sf is not None and math.isclose(sf, 1, abs_tol=0.1):
+        # NOTE: Even though the model thinks the object is mis-scaled, the correction factor
+        #       is not significant enough, so we ignore it and mark the object well-scaled.
+        output.misscaled = False
+        output.misscaling_type = "N/A"
+
+    if sf is None and output.misscaled:
+        return "failure"
+        # NOTE: This might be cases where dims are zeros, e.g., due to being non-surface photogrammetry
+
+    return {
+        "misscaled": 1 if output.misscaled else 0,
+        "misscaling_type": output.misscaling_type,
+        "dims_x": dims[0],
+        "dims_y": dims[1],
+        "dims_z": dims[2],
+        "fs_path": str(file_path),
+        "fs_path_scaled": str(scaled_model_path) if output.misscaled else None,
+    }
+
+
 def reset_metadata():
     """
     Clear all metadata.
@@ -368,12 +444,24 @@ def reset_metadata():
     logger.info("Metadata has been reset.")
 
 
-def compute_metadata(version: int):
+def compute_metadata(version: int, max_concurrent: int = 10):
     """
-    Computes and updates metadata for assets that are out of date.
+    Computes and updates metadata for assets that are out of date using async processing.
 
     Args:
         version (int): The version of the metadata logic to apply.
+        max_concurrent (int): Maximum number of concurrent LLM API calls.
+    """
+    asyncio.run(_compute_metadata_async(version, max_concurrent))
+
+
+async def _compute_metadata_async(version: int, max_concurrent: int = MAX_CONCURRENT):
+    """
+    Internal async function that performs the actual metadata computation.
+
+    Args:
+        version (int): The version of the metadata logic to apply.
+        max_concurrent (int): Maximum number of concurrent LLM API calls.
     """
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -392,40 +480,85 @@ def compute_metadata(version: int):
 
     # Ensure that thumbnail directory exists
     THUMBNAIL_DIR.mkdir(exist_ok=True)
+    conn.close()
 
-    with tqdm(
-        total=len(target_assets), desc=f"Computing metadata (v{version})"
-    ) as pbar:
-        for uuid, path_str in target_assets:
+    # Create semaphore to limit concurrent LLM calls
+    semaphore = asyncio.Semaphore(max_concurrent)
+    
+    async def process_single_asset(uuid: str, path_str: str) -> tuple[str, dict | str]:
+        """Process a single asset with concurrency control."""
+        async with semaphore:
             file_path = Path(path_str)
-            if file_path.exists():
+            if not file_path.exists():
+                logger.warning(f"SKIPPING missing file: {uuid}")
+                return uuid, "missing_file"
+            
+            try:
                 thumbnail_paths = generate_thumbnails(uuid, path_str, THUMBNAIL_DIR)
                 thumbnail_paths = [str(path) for path in thumbnail_paths]  # TEMP
-                metadata = calc_metadata(file_path, thumbnail_paths=thumbnail_paths)
+                metadata = await calc_metadata_async(file_path, thumbnail_paths=thumbnail_paths)
+                
                 if metadata == "failure":
                     logger.warning(f"{uuid}: metadata generation failure.")
-                    continue
-                    # TODO: decide if row should be deleted from DB as well
+                    return uuid, "failure"
+                
+                # Add additional metadata fields
                 metadata["thumbnail_paths"] = json.dumps(thumbnail_paths)
                 metadata["metadata_version"] = version
                 metadata["last_updated"] = datetime.datetime.now().isoformat()
+                
+                return uuid, metadata
+            except Exception as e:
+                logger.error(f"Error processing asset {uuid}: {e}")
+                return uuid, "error"
 
-                update_query = f"UPDATE assets SET {', '.join(f'{k} = ?' for k in metadata)} WHERE uuid = ?"
-                values = list(metadata.values()) + [uuid]
+    # Create tasks for all assets
+    tasks = [process_single_asset(uuid, path_str) for uuid, path_str in target_assets]
+    
+    # Process all tasks concurrently with progress bar
+    results = []
+    with tqdm(total=len(tasks), desc=f"Computing metadata (v{version})") as pbar:
+        # Process in batches to avoid overwhelming the progress bar
+        batch_size = 100
+        for i in range(0, len(tasks), batch_size):
+            batch_tasks = tasks[i:i + batch_size]
+            batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+            results.extend(batch_results)
+            pbar.update(len(batch_tasks))
 
-                cursor.execute(update_query, values)
-            else:
-                # Case in which file might have been deleted since indexing
-                pbar.set_postfix_str(f"SKIPPING missing file: {uuid}", refresh=True)
-
-            pbar.update(1)
-            # if pbar.n % BATCH_SIZE == 0:  # save periodically
-            if True:  # save at every asset
-                conn.commit()
+    # Handle database updates
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    
+    successful_updates = 0
+    failed_updates = 0
+    
+    for result in results:
+        if isinstance(result, Exception):
+            logger.error(f"Task failed with exception: {result}")
+            failed_updates += 1
+            continue
+            
+        uuid, metadata = result
+        
+        if metadata in ["failure", "missing_file", "error"]:
+            failed_updates += 1
+            continue
+            
+        # Update database
+        try:
+            update_query = f"UPDATE assets SET {', '.join(f'{k} = ?' for k in metadata)} WHERE uuid = ?"
+            values = list(metadata.values()) + [uuid]
+            cursor.execute(update_query, values)
+            successful_updates += 1
+        except Exception as e:
+            logger.error(f"Database update failed for {uuid}: {e}")
+            failed_updates += 1
 
     conn.commit()
     conn.close()
-    logger.info("Metadata computation complete.")
+    
+    logger.info(f"Metadata computation complete. Success: {successful_updates}, Failed: {failed_updates}")
 
 
 def get_asset_details(uuid_to_check: str) -> dict | None:
