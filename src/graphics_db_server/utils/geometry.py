@@ -1,6 +1,41 @@
+import math
 from typing import Optional
 
 import pyvista as pv
+
+from graphics_db_server.logging import logger
+from graphics_db_server.utils.rounding import safe_round
+
+
+def calc_optimal_scaling_factor(
+    original_dims: list[float, float, float], desired_dims: list[float, float, float]
+) -> float:
+    """
+    Calculates the optimal scaling factor given original and desired dimensions.
+
+    Args:
+        original_dims: Original dimensions as [x, y, z] list
+        desired_dims: Desired dimensions as [x, y, z] list
+
+    Returns:
+        float: The optimal scaling factor to apply
+    """
+    # Calculate scaling factors for each dimension
+    scale_factors = [
+        desired_dims[i] / original_dims[i] for i in range(3) if original_dims[i] != 0
+    ]
+
+    if not scale_factors:
+        return 1.0
+
+    # Use uniform scaling - take the geometric mean for balanced scaling
+    geometric_mean = math.pow(math.prod(scale_factors), 1.0 / len(scale_factors))
+
+    logger.debug(
+        f"[tool] calc_optimal_scaling_factor(): {original_dims} → {desired_dims}; SF={safe_round(geometric_mean, 3)}"
+    )
+
+    return safe_round(geometric_mean, 3)
 
 
 def get_glb_bounding_box(glb_path: str) -> tuple[bool, Optional[tuple], Optional[str]]:

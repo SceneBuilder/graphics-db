@@ -5,12 +5,12 @@ and integrating with the graphics DB extra index setup.
 NOTE: It seems plausible that `scale` attribute, especially if annotated by gpt 3.5,
       contains significant errors. However, the `size` attribute seems better, and
       we can utilize `calc_optimal_scaling_factor()` to redo SF calculation.
-      → Upon consulting objathor codebase, `scale` actually seems to roughly refer to 
-      the longest edge in meters—not a 0.0-1.0 float. 
+      → Upon consulting objathor codebase, `scale` actually seems to refer to the
+      longest edge in meters—not a 0.0-1.0 float that represents scaling factor.
 NOTE: The `size` attribute seems to assume z-up orientation, while bounding box
       suggests the model is in y-up orientation—so when feeding into `calc_optimal_scaling_factor`,
       it may be required to either assume the most common transformation, or heuristically mix-match
-      the closest values, and report its occurrence in logs/console for potential analysis. 
+      the closest values, and report its occurrence in logs/console for potential analysis.
 NOTE: `thor_metadata.boundingBox` attribute seems the most reliable for obtaining scale information.
 NOTE: `z_axis_scale` attribute may contain reliable information for how to match the y/z size values.
 """
@@ -21,10 +21,13 @@ from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
 
 from graphics_db_server.core.config import OBJATHOR_ANNO_JSON_PATH
-from graphics_db_server.utils.rounding import safe_round
-from graphics_db_server.utils.geometry import get_glb_dimensions
-from graphics_db_server.utils.scale_validation import scale_glb_model
 from graphics_db_server.logging import logger
+from graphics_db_server.utils.rounding import safe_round
+from graphics_db_server.utils.geometry import (
+    calc_optimal_scaling_factor,
+    get_glb_dimensions,
+)
+from graphics_db_server.utils.scale_validation import scale_glb_model
 
 objathor_annotation = None
 
@@ -78,15 +81,22 @@ def extract_scale_analysis_from_objathor(
     description = asset_data.get("description") or asset_data.get(
         "description_auto", ""
     )
-    scale_factor = asset_data.get("scale", 1.0)
+    # scale_factor = asset_data.get("scale", 1.0)  # NOTE: this is incorrect; see front matter
+    # if not asset_data["z_axis_scale"]:
+    logger.debug(f"{asset_data['z_axis_scale']=}")
+    # TODO: see if y-z dims mismatch happens in this case
+    bbox = (
+        asset_data.get("thor_metadata", None)
+        .get("assetMetadata", None)
+        .get("boundingBox", None)
+    )  # NOTE: in meters already
+    dmin, dmax = list(bbox["min"].values()), list(bbox["max"].values())
+    desired_dims = [max - min for (min, max) in zip(dmin, dmax)]
+    scale_factor = calc_optimal_scaling_factor(original_dims, desired_dims)
     annotated_size = asset_data.get("size", [])  # in cm
 
-    # Convert annotated size from cm to meters
-    if annotated_size and len(annotated_size) == 3:
-        desired_dims = [size / 100.0 for size in annotated_size]  # cm to meters
-    else:
-        # Fallback: use original dimensions
-        desired_dims = list(original_dims)
+    # # Fallback: use original dimensions
+    # desired_dims = list(original_dims)
 
     # Calculate if the object is misscaled
     # If scale factor is significantly different from 1.0, it's misscaled
@@ -94,9 +104,9 @@ def extract_scale_analysis_from_objathor(
 
     # Determine misscaling type based on scale factor
     if is_misscaled:
-        if math.isclose(scale_factor, 0.01, rel_tol=0.1):
+        if math.isclose(scale_factor, 0.01, rel_tol=0.5):
             misscaling_type = "cm"
-        elif math.isclose(scale_factor, 0.001, rel_tol=0.1):
+        elif math.isclose(scale_factor, 0.001, rel_tol=0.5):
             misscaling_type = "mm"
         else:
             misscaling_type = "arbitrary"
@@ -111,7 +121,7 @@ def extract_scale_analysis_from_objathor(
     return {
         "object_description": f"{category}: {description}",
         "ideal_dimensions": f"[{desired_dims[0]:.2f}, {desired_dims[1]:.2f}, {desired_dims[2]:.2f}] m",
-        "reasoning": f"Based on ObjaTHOR annotations: category={category}, annotated_size={annotated_size} cm",
+        "reasoning": f"Based on ObjaTHOR annotations: category={category}, THOR bbox size={desired_dims}",
         "misscaled": is_misscaled,
         "misscaling_type": misscaling_type,
         "correction_factor": scale_factor if is_misscaled else None,

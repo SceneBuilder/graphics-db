@@ -3,15 +3,17 @@
 #       with a traditional pipeline. This may allow much faster and much more efficient execution.
 #       Plus, concatenating thumbnail images can be a good idea — depending on accuracy & cost.
 
-# TODO: make sure the conversation history does not accumulate.
-
 """
 This script sets up an additional SQLite-based DB for metadata interaction,
 such as computing 3D bounding box, analyzing re-scaling parameters, thumbnails,
 and filesystem locations for fast disk lookups.
 
+This is meant as a stable staging area for all relevant asset (for now, object) annotations,
+for offline ingestion from external data sources or VLM-based analysis in-house. 
+
 NOTE: Currently, this script is specifically written for Objaverse dataset.
 TODO: Modularize to suit different asset data sources.
+TODO: add generic name/description to DB schema for easier debugging / other potential uses
 """
 
 import argparse
@@ -44,7 +46,10 @@ from graphics_db_server.core.config import (
 )
 from graphics_db_server.logging import logger
 from graphics_db_server.tools.read_file import read_media_file
-from graphics_db_server.utils.geometry import get_glb_dimensions
+from graphics_db_server.utils.geometry import (
+    calc_optimal_scaling_factor,
+    get_glb_dimensions,
+)
 from graphics_db_server.utils.pai import transform_paths_to_binary
 from graphics_db_server.utils.rounding import safe_round
 from graphics_db_server.utils.scale_validation import scale_glb_model
@@ -200,36 +205,6 @@ class ScaleAnalysisOutput(BaseModel):
     misscaled: bool
     misscaling_type: Literal["mm", "cm", "arbitrary", "N/A"]
     correction_factor: float | None = None
-
-
-def calc_optimal_scaling_factor(
-    original_dims: list[float, float, float], desired_dims: list[float, float, float]
-) -> float:
-    """
-    Calculates the optimal scaling factor given original and desired dimensions.
-
-    Args:
-        original_dims: Original dimensions as [x, y, z] list
-        desired_dims: Desired dimensions as [x, y, z] list
-
-    Returns:
-        float: The optimal scaling factor to apply
-    """
-    # Calculate scaling factors for each dimension
-    scale_factors = [
-        desired_dims[i] / original_dims[i] for i in range(3) if original_dims[i] != 0
-    ]
-
-    if not scale_factors:
-        return 1.0
-
-    # Use uniform scaling - take the geometric mean for balanced scaling
-    geometric_mean = math.pow(math.prod(scale_factors), 1.0 / len(scale_factors))
-
-    logger.debug(
-        f"[tool] original_dims={original_dims}, desired_dims={desired_dims}, scaling_factor={round(geometric_mean, 5)}"
-    )
-    return round(geometric_mean, 5)
 
 
 # model = GoogleModel("gemini-2.5-flash")
