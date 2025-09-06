@@ -90,6 +90,7 @@ def setup_database():
         "thumbnail_paths": "TEXT",
         "fs_path": "TEXT",
         "fs_path_scaled": "TEXT",
+        "rescaled_by": "TEXT",
     }
 
     cursor.execute("PRAGMA table_info(assets)")
@@ -343,6 +344,7 @@ def calc_metadata(file_path: Path, thumbnail_paths: list[Path] | None = None) ->
         "dims_z": dims[2],
         "fs_path": str(file_path),
         "fs_path_scaled": str(scaled_model_path) if output.misscaled else None,
+        "rescaled_by": "graphics-db",
     }
 
 
@@ -417,6 +419,7 @@ async def calc_metadata_async(file_path: Path, thumbnail_paths: list[Path] | Non
         "dims_z": dims[2],
         "fs_path": str(file_path),
         "fs_path_scaled": str(scaled_model_path) if output.misscaled else None,
+        "rescaled_by": "graphics-db",
     }
 
 
@@ -439,6 +442,9 @@ def reset_metadata():
             metadata_version = NULL,
             last_updated = NULL,
             thumbnail_paths = NULL
+            fs_path = NULL
+            fs_path_scaled = NULL
+            rescaled_by = NULL
     """)
     conn.commit()
     logger.info("Metadata has been reset.")
@@ -506,6 +512,7 @@ async def _compute_metadata_async(version: int, max_concurrent: int = MAX_CONCUR
                 metadata["thumbnail_paths"] = json.dumps(thumbnail_paths)
                 metadata["metadata_version"] = version
                 metadata["last_updated"] = datetime.datetime.now().isoformat()
+                metadata["rescaled_by"] = "graphics-db"
                 
                 return uuid, metadata
             except Exception as e:
