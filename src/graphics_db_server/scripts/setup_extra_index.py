@@ -87,6 +87,9 @@ def setup_database():
         "dims_x": "REAL",
         "dims_y": "REAL",
         "dims_z": "REAL",
+        "dims_xr": "REAL",
+        "dims_yr": "REAL",
+        "dims_zr": "REAL",
         "scaling_factor": "REAL",
         "metadata_version": "INTEGER",
         "last_updated": "TEXT",
@@ -345,6 +348,9 @@ def calc_metadata(file_path: Path, thumbnail_paths: list[Path] | None = None) ->
         "dims_x": safe_round(dims[0], ROUND_DIGITS),
         "dims_y": safe_round(dims[1], ROUND_DIGITS),
         "dims_z": safe_round(dims[2], ROUND_DIGITS),
+        "dims_xr": safe_round(dims[0] * sf, ROUND_DIGITS) if output.misscaled else -1,
+        "dims_yr": safe_round(dims[1] * sf, ROUND_DIGITS) if output.misscaled else -1,
+        "dims_zr": safe_round(dims[2] * sf, ROUND_DIGITS) if output.misscaled else -1,
         "scaling_factor": safe_round(sf, ROUND_DIGITS) if output.misscaled else -1,
         "fs_path": str(file_path),
         "fs_path_rescaled": str(scaled_model_path) if output.misscaled else None,
@@ -423,6 +429,9 @@ async def calc_metadata_async(
         "dims_x": safe_round(dims[0], ROUND_DIGITS),
         "dims_y": safe_round(dims[1], ROUND_DIGITS),
         "dims_z": safe_round(dims[2], ROUND_DIGITS),
+        "dims_xr": safe_round(dims[0] * sf, ROUND_DIGITS) if output.misscaled else -1,
+        "dims_yr": safe_round(dims[1] * sf, ROUND_DIGITS) if output.misscaled else -1,
+        "dims_zr": safe_round(dims[2] * sf, ROUND_DIGITS) if output.misscaled else -1,
         "scaling_factor": safe_round(sf, ROUND_DIGITS) if output.misscaled else -1,
         "fs_path": str(file_path),
         "fs_path_rescaled": str(scaled_model_path) if output.misscaled else None,
@@ -445,6 +454,9 @@ def reset_metadata():
             dims_x = NULL,
             dims_y = NULL,
             dims_z = NULL,
+            dims_xr = NULL,
+            dims_yr = NULL,
+            dims_zr = NULL,
             scaling_factor = NULL,
             correction_factor = NULL,
             metadata_version = NULL,
@@ -458,7 +470,7 @@ def reset_metadata():
     logger.info("Metadata has been reset.")
 
 
-def compute_metadata(version: int, max_concurrent: int = 10):
+def compute_metadata(version: int, max_concurrent: int = MAX_CONCURRENT):
     """
     Computes and updates metadata for assets that are out of date using async processing.
 
