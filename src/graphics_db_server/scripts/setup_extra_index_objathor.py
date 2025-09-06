@@ -5,10 +5,14 @@ and integrating with the graphics DB extra index setup.
 NOTE: It seems plausible that `scale` attribute, especially if annotated by gpt 3.5,
       contains significant errors. However, the `size` attribute seems better, and
       we can utilize `calc_optimal_scaling_factor()` to redo SF calculation.
+      → Upon consulting objathor codebase, `scale` actually seems to roughly refer to 
+      the longest edge in meters—not a 0.0-1.0 float. 
 NOTE: The `size` attribute seems to assume z-up orientation, while bounding box
       suggests the model is in y-up orientation—so when feeding into `calc_optimal_scaling_factor`,
       it may be required to either assume the most common transformation, or heuristically mix-match
       the closest values, and report its occurrence in logs/console for potential analysis. 
+NOTE: `thor_metadata.boundingBox` attribute seems the most reliable for obtaining scale information.
+NOTE: `z_axis_scale` attribute may contain reliable information for how to match the y/z size values.
 """
 
 import json
