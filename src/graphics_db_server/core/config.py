@@ -1,5 +1,6 @@
 import os
 
+from dotenv import load_dotenv
 from pydantic import BaseModel
 
 # Consts
@@ -38,6 +39,8 @@ VLM_PROVIDER_BASE_URL = "http://localhost:8000/v1"
 # App
 USE_MEAN_POOL = True
 THUMBNAIL_RESOLUTION = 1024
+
+load_dotenv()
 
 
 class DBSettings(BaseModel):
