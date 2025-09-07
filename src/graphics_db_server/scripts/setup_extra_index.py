@@ -9,7 +9,7 @@ such as computing 3D bounding box, analyzing re-scaling parameters, thumbnails,
 and filesystem locations for fast disk lookups.
 
 This is meant as a stable staging area for all relevant asset (for now, object) annotations,
-for offline ingestion from external data sources or VLM-based analysis in-house. 
+for offline ingestion from external data sources or VLM-based analysis in-house.
 
 NOTE: Currently, this script is specifically written for Objaverse dataset.
 TODO: Modularize to suit different asset data sources.
@@ -63,7 +63,7 @@ from graphics_db_server.scripts.setup_extra_index_objathor import (
 DB_FILE = "graphics_db_extra_index.db"
 THUMBNAIL_DIR = Path("/media/ycho358/YunhoStrgExt/graphics_db_thumbnails")
 METADATA_VERSION = 1  # NOTE: increment with logic changes
-BATCH_SIZE = 1000  # for periodic DB commits
+BATCH_SIZE = 100  # for periodic DB commits
 MAX_CONCURRENT = 100  # for VLM calls
 ROUND_DIGITS = 3
 
@@ -113,7 +113,7 @@ def setup_database():
 
     for col_name, col_type in columns.items():
         if col_name not in existing_columns:
-            logger.info(f"Adding column: {col_name}")
+            logger.debug(f"Adding column: {col_name}")
             cursor.execute(f"ALTER TABLE assets ADD COLUMN {col_name} {col_type}")
 
     conn.commit()
@@ -150,7 +150,7 @@ def setup_index(data_dir: Path):
 
     with tqdm(total=len(asset_files), desc="Indexing assets") as pbar:
         while True:
-            batch = [item for _, item in zip(range(BATCH_SIZE), asset_data_generator)]
+            batch = [item for _, item in zip(range(BATCH_SIZE*10), asset_data_generator)]
             if not batch:
                 break
             cursor.executemany(
@@ -550,46 +550,51 @@ async def _compute_metadata_async(
     # Create tasks for all assets
     tasks = [process_single_asset(uuid, path_str) for uuid, path_str in target_assets]
 
-    # Process all tasks concurrently with progress bar
-    results = []
-    with tqdm(total=len(tasks), desc=f"Computing metadata (v{version})") as pbar:
-        # Process in batches to avoid overwhelming the progress bar
-        batch_size = 100
-        for i in range(0, len(tasks), batch_size):
-            batch_tasks = tasks[i : i + batch_size]
-            batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
-            results.extend(batch_results)
-            pbar.update(len(batch_tasks))
-
-    # Handle database updates
+    # Handle database updates with progress bar
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
 
     successful_updates = 0
     failed_updates = 0
 
-    for result in results:
-        if isinstance(result, Exception):
-            logger.error(f"Task failed with exception: {result}")
-            failed_updates += 1
-            continue
+    def update_database(batch_results):
+        nonlocal successful_updates, failed_updates
 
-        uuid, metadata = result
+        for result in batch_results:
+            if isinstance(result, Exception):
+                logger.error(f"Task failed with exception: {result}")
+                failed_updates += 1
+                continue
 
-        if metadata in ["failure", "missing_file", "error"]:
-            failed_updates += 1
-            continue
+            uuid, metadata = result
 
-        # Update database
-        try:
-            update_query = f"UPDATE assets SET {', '.join(f'{k} = ?' for k in metadata)} WHERE uuid = ?"
-            values = list(metadata.values()) + [uuid]
-            cursor.execute(update_query, values)
-            successful_updates += 1
-        except Exception as e:
-            logger.error(f"Database update failed for {uuid}: {e}")
-            failed_updates += 1
+            if metadata in ["failure", "missing_file", "error"]:
+                failed_updates += 1
+                continue
 
+            # Update database
+            try:
+                update_query = f"UPDATE assets SET {', '.join(f'{k} = ?' for k in metadata)} WHERE uuid = ?"
+                values = list(metadata.values()) + [uuid]
+                cursor.execute(update_query, values)
+                successful_updates += 1
+
+            except Exception as e:
+                logger.error(f"Database update failed for {uuid}: {e}")
+                failed_updates += 1
+
+        conn.commit()
+        logger.debug(f"Committed batch of {BATCH_SIZE} updates")
+
+    # Process tasks concurrently w/ progress bar and database updates
+    with tqdm(total=len(tasks), desc=f"Computing metadata (v{version})") as pbar:
+        for i in range(0, len(tasks), BATCH_SIZE):
+            batch_tasks = tasks[i : i + BATCH_SIZE]
+            batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+            update_database(batch_results)
+            pbar.update(len(batch_tasks))
+
+    # Commit any remaining updates & close
     conn.commit()
     conn.close()
 
@@ -628,7 +633,7 @@ def main():
         choices=["vlm_only", "prefer_external", "external_only"],
         # default="prefer_external",
         default="external_only",
-        help="Annotation strategy: vlm_only (VLM analysis only), prefer_external (try external first, fallback to VLM), external_only (external annotations only)"
+        help="Annotation strategy: vlm_only (VLM analysis only), prefer_external (try external first, fallback to VLM), external_only (external annotations only)",
     )
     args = parser.parse_args()
 
@@ -636,7 +641,7 @@ def main():
     if args.reset:
         reset_metadata()
     for source_name, local_dir in LOCAL_FS_PATHS.items():
-        setup_index(Path(local_dir))
+        setup_index(Path(local_dir).expanduser())
         compute_metadata(METADATA_VERSION, strategy=args.strategy)
 
 
