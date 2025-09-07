@@ -524,8 +524,12 @@ async def _compute_metadata_async(
                 return uuid, "missing_file"
 
             try:
-                thumbnail_paths = generate_thumbnails(uuid, path_str, THUMBNAIL_DIR)
-                thumbnail_paths = [str(path) for path in thumbnail_paths]  # TEMP
+                # Only generate thumbnails if strategy requires VLM analysis
+                thumbnail_paths = None
+                if strategy in ["vlm_only", "prefer_external"]:
+                    thumbnail_paths = generate_thumbnails(uuid, path_str, THUMBNAIL_DIR)
+                    thumbnail_paths = [str(path) for path in thumbnail_paths]  # TEMP
+                
                 metadata = await calc_metadata_async(
                     file_path,
                     thumbnail_paths=thumbnail_paths,
