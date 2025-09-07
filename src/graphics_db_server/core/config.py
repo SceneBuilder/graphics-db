@@ -18,8 +18,8 @@ EMBEDDING_PATHS = {
     }
 }
 LOCAL_FS_PATHS = {
-    "Objaverse": "./data/mini_objaverse"  # debug
-    # "Objaverse": "/media/ycho358/Expansion/.objaverse"  # prod
+    # "Objaverse": "./data/mini_objaverse"  # debug
+    "Objaverse": "/media/ycho358/Expansion/.objaverse"  # prod
 }
 OBJATHOR_ANNO_JSON_PATH = "~/.objathor-assets/2023_09_23/annotations.json"  # set this to your ObjaTHOR JSON file path
 

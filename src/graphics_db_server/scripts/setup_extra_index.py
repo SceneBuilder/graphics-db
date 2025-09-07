@@ -137,7 +137,7 @@ def setup_index(data_dir: Path):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
 
-    logger.debug("Discovering all .glb files first to show progres...")
+    logger.debug("Discovering all .glb files first to show progress...")
     asset_files = [p for p in data_dir.rglob("*.glb") if not p.stem.endswith("_scaled")]
 
     if not asset_files:
@@ -340,19 +340,26 @@ def calc_metadata(file_path: Path, thumbnail_paths: list[Path] | None = None) ->
 async def calc_metadata_async(
     file_path: Path,
     thumbnail_paths: list[Path] | None = None,
-    use_external: bool = False,
+    strategy: str = "vlm_only",
 ) -> dict:
     """Async version of calc_metadata function."""
     uuid = file_path.stem
 
-    # Use ObjaTHOR data if requested
-    if use_external:
+    # Handle different annotation strategies
+    if strategy == "external_only":
         if objathor_annotation_available(uuid):
             metadata = await calc_metadata_objathor(file_path, ROUND_DIGITS)
-            if metadata != "failure":  # success
+            if metadata != "failure":
                 return metadata
-        else:
-            pass  # Fall back to VLM analysis if ObjaTHOR data not available
+        return "failure"  # No external data available for external_only strategy
+    elif strategy == "prefer_external":
+        if objathor_annotation_available(uuid):
+            metadata = await calc_metadata_objathor(file_path, ROUND_DIGITS)
+            if metadata != "failure":
+                return metadata
+        # Fall back to VLM analysis if external data not available
+    elif strategy == "vlm_only":
+        pass  # Skip external annotation, proceed directly to VLM analysis
 
     _, dims, _ = get_glb_dimensions(file_path)
 
@@ -462,7 +469,7 @@ def reset_metadata():
 
 
 def compute_metadata(
-    version: int, max_concurrent: int = MAX_CONCURRENT, use_external: bool = False
+    version: int, max_concurrent: int = MAX_CONCURRENT, strategy: str = "vlm_only"
 ):
     """
     Computes and updates metadata for assets that are out of date using async processing.
@@ -470,13 +477,13 @@ def compute_metadata(
     Args:
         version (int): The version of the metadata logic to apply.
         max_concurrent (int): Maximum number of concurrent LLM API calls.
-        use_external (bool): If True, attempt to use external annotation before falling back to VLM analysis.
+        strategy (str): Annotation strategy - 'vlm_only', 'prefer_external', or 'external_only'.
     """
-    asyncio.run(_compute_metadata_async(version, max_concurrent, use_external))
+    asyncio.run(_compute_metadata_async(version, max_concurrent, strategy))
 
 
 async def _compute_metadata_async(
-    version: int, max_concurrent: int = MAX_CONCURRENT, use_external: bool = False
+    version: int, max_concurrent: int = MAX_CONCURRENT, strategy: str = "vlm_only"
 ):
     """
     Internal async function that performs the actual metadata computation.
@@ -484,7 +491,7 @@ async def _compute_metadata_async(
     Args:
         version (int): The version of the metadata logic to apply.
         max_concurrent (int): Maximum number of concurrent LLM API calls.
-        use_external (bool): If True, attempt to use external annotation before falling back to VLM analysis.
+        strategy (str): Annotation strategy - 'vlm_only', 'prefer_external', or 'external_only'.
     """
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -522,7 +529,7 @@ async def _compute_metadata_async(
                 metadata = await calc_metadata_async(
                     file_path,
                     thumbnail_paths=thumbnail_paths,
-                    use_external=use_external,
+                    strategy=strategy,
                 )
 
                 if metadata == "failure":
@@ -616,6 +623,13 @@ def main():
     parser = argparse.ArgumentParser(description="")
     # NOTE: data_dir is sourced from core/config.py
     parser.add_argument("--reset", action="store_true", help="Clear all existing data.")
+    parser.add_argument(
+        "--strategy",
+        choices=["vlm_only", "prefer_external", "external_only"],
+        # default="prefer_external",
+        default="external_only",
+        help="Annotation strategy: vlm_only (VLM analysis only), prefer_external (try external first, fallback to VLM), external_only (external annotations only)"
+    )
     args = parser.parse_args()
 
     setup_database()
@@ -623,8 +637,7 @@ def main():
         reset_metadata()
     for source_name, local_dir in LOCAL_FS_PATHS.items():
         setup_index(Path(local_dir))
-        # compute_metadata(METADATA_VERSION)
-        compute_metadata(METADATA_VERSION, use_external=True)
+        compute_metadata(METADATA_VERSION, strategy=args.strategy)
 
 
 if __name__ == "__main__":
