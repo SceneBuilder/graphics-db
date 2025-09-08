@@ -12,7 +12,7 @@ This is meant as a stable staging area for all relevant asset (for now, object) 
 for offline ingestion from external data sources or VLM-based analysis in-house.
 
 NOTE: Currently, this script is specifically written for Objaverse dataset.
-TODO: Modularize to suit different asset data sources.
+TODO: Modularize to suit different asset data sources (different asset datasets).
 TODO: add generic name/description to DB schema for easier debugging / other potential uses
 """
 
@@ -39,6 +39,7 @@ from pydantic_ai import RunContext
 from tqdm import tqdm
 
 from graphics_db_server.core.config import (
+    EXTRA_INDEX_DB_FILE,
     LOCAL_FS_PATHS,
     THUMBNAIL_RESOLUTION,
     VLM_MODEL_NAME,
@@ -60,7 +61,6 @@ from graphics_db_server.scripts.setup_extra_index_objathor import (
 )
 
 # Configuration
-DB_FILE = "graphics_db_extra_index.db"
 THUMBNAIL_DIR = Path("/media/ycho358/YunhoStrgExt/graphics_db_thumbnails")
 METADATA_VERSION = 1  # NOTE: increment with logic changes
 BATCH_SIZE = 100  # for periodic DB commits
@@ -78,7 +78,7 @@ def setup_database():
     """
     Sets up SQLite database. Adds columns for metadata if not exists.
     """
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(EXTRA_INDEX_DB_FILE)
     cursor = conn.cursor()
 
     logger.info("Setting up database schema...")
@@ -118,7 +118,7 @@ def setup_database():
 
     conn.commit()
     conn.close()
-    logger.info(f"Database {DB_FILE} is set up and ready.")
+    logger.info(f"Database {EXTRA_INDEX_DB_FILE} is set up and ready.")
 
 
 def setup_index(data_dir: Path):
@@ -134,7 +134,7 @@ def setup_index(data_dir: Path):
 
     logger.info(f"Starting to index .glb files in {data_dir}...")
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(EXTRA_INDEX_DB_FILE)
     cursor = conn.cursor()
 
     logger.debug("Discovering all .glb files first to show progress...")
@@ -493,7 +493,7 @@ async def _compute_metadata_async(
         max_concurrent (int): Maximum number of concurrent LLM API calls.
         strategy (str): Annotation strategy - 'vlm_only', 'prefer_external', or 'external_only'.
     """
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(EXTRA_INDEX_DB_FILE)
     cursor = conn.cursor()
 
     query = "SELECT uuid, file_path FROM assets WHERE metadata_version IS NULL OR metadata_version < ?"
@@ -555,7 +555,7 @@ async def _compute_metadata_async(
     tasks = [process_single_asset(uuid, path_str) for uuid, path_str in target_assets]
 
     # Handle database updates with progress bar
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(EXTRA_INDEX_DB_FILE)
     cursor = conn.cursor()
 
     successful_updates = 0
@@ -605,27 +605,6 @@ async def _compute_metadata_async(
     logger.info(
         f"Metadata computation complete. Success: {successful_updates}, Failed: {failed_updates}"
     )
-
-
-def get_asset_details(uuid_to_check: str) -> dict | None:
-    """
-    Retrieves all stored data for a given UUID.
-
-    Args:
-        uuid_to_check (str): The asset UUID to find.
-
-    Returns:
-        dict | None: A dictionary of the asset's data if found, otherwise None.
-    """
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT * FROM assets WHERE uuid = ?", (uuid_to_check,))
-    result = cursor.fetchone()
-
-    conn.close()
-    return dict(result) if result else None
 
 
 def main():

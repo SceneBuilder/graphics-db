@@ -13,6 +13,7 @@ from graphics_db_server.schemas.asset import Asset
 from graphics_db_server.sources.from_objaverse import (
     download_assets,
     get_thumbnails,
+    locate_assets,
 )
 from graphics_db_server.utils.scale_validation import validate_asset_scales
 from graphics_db_server.utils.geometry import get_glb_dimensions
@@ -72,7 +73,7 @@ def get_asset_thumbnails(request: AssetThumbnailsRequest):
 @router.get("/assets/download/{asset_uid}/glb")
 def download_glb_file(asset_uid: str):
     """
-    Downloads the .glb file for a given Objaverse asset UID.
+    Downloads the .glb file for a given asset UID.
     """
     try:
         asset_paths = download_assets([asset_uid])
@@ -88,6 +89,30 @@ def download_glb_file(asset_uid: str):
     except Exception as e:
         logger.error(f"Error serving .glb file for asset {asset_uid}: {e}")
         raise HTTPException(status_code=500, detail="Failed to serve .glb file")
+
+
+@router.get("/assets/locate/{asset_uid}/glb")
+def locate_glb_file(asset_uid: str):
+    """
+    Retrieves the path of .glb file in the local filesystem (where graphics-db is running).
+    This is useful if the client application is running on the same PC or a shared filesystem.
+    """
+    try:
+        # TODO: check what dataset uid belongs to, and then do downstream
+        #       file search / download / access accordingly.
+        asset_paths = locate_assets([asset_uid])
+
+        if asset_uid not in asset_paths:
+            raise HTTPException(status_code=404, detail="Asset not found")
+
+        glb_path = asset_paths[asset_uid]
+
+        response_data = {}
+        response_data["path"] = glb_path
+        return JSONResponse(content=response_data)
+    except Exception as e:
+        logger.error(f"Error serving .glb file path for asset {asset_uid}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to serve .glb file path")
 
 
 @router.get("/assets/{asset_uid}/metadata")

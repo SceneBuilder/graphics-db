@@ -18,6 +18,7 @@ from graphics_db_server.core.config import (
 )
 from graphics_db_server.logging import logger
 from graphics_db_server.schemas.asset import AssetCreate
+from graphics_db_server.utils.extra_index import get_asset_details
 from graphics_db_server.utils.scale_validation import validate_asset_scales
 from graphics_db_server.utils.thumbnail import generate_thumbnail_from_glb
 
@@ -188,6 +189,25 @@ def download_assets(asset_ids: list[str]):
     return asset_paths
 
 
+def locate_assets(asset_ids: list[str]):
+    """
+    Locates 3D assets inside the local Objaverse cache based on a list of asset UIDs.
+    
+    NOTE: This requires the extra_index.db sqlite file to be present. 
+
+    Args:
+        asset_ids (list[str]): A list of asset UIDs to download.
+    """
+    asset_paths = []
+    for id in asset_ids:
+        metadata = get_asset_details(id)
+        if metadata["misscaled"] == 1:
+            path = metadata["fs_path_rescaled"]
+        else:
+            path = metadata["fs_path"]
+        asset_paths.append(path)
+    
+    return asset_paths
 
 
 def get_thumbnails(asset_paths: dict[str, str]) -> dict[str, Path]:

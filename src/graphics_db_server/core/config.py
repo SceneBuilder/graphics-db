@@ -22,6 +22,9 @@ LOCAL_FS_PATHS = {
     # "Objaverse": "./data/mini_objaverse"  # debug
     "Objaverse": "~/.objaverse_full"  # prod
 }
+
+# Extra index
+EXTRA_INDEX_DB_FILE = "graphics_db_extra_index.db"
 OBJATHOR_ANNO_JSON_PATH = "~/.objathor-assets/2023_09_23/annotations.json"  # set this to your ObjaTHOR JSON file path
 
 # Data validation
