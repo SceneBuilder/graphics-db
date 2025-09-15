@@ -1,7 +1,7 @@
 import base64
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel
 
@@ -19,6 +19,7 @@ from graphics_db_server.sources.from_objaverse import (
 )
 from graphics_db_server.utils.scale_validation import validate_asset_scales
 from graphics_db_server.utils.geometry import get_glb_dimensions
+from graphics_db_server.utils.rounding import safe_round_dict
 
 router = APIRouter()
 
@@ -83,10 +84,12 @@ def get_asset_thumbnail(asset_uid: str):
     Returns the image file directly for use in markdown or web pages.
     """
     try:
-        asset_paths = locate_assets([asset_uid]) or download_assets([asset_uid])  # singleton
+        asset_paths = locate_assets([asset_uid]) or download_assets(
+            [asset_uid]
+        )  # singleton
         if asset_uid not in asset_paths:
             raise HTTPException(status_code=404, detail="Asset not found")
-        
+
         asset_thumbnails = get_thumbnails(asset_paths)
         if asset_uid not in asset_thumbnails:
             raise HTTPException(status_code=404, detail="Thumbnail not found")
@@ -156,10 +159,11 @@ def get_asset_metadata(asset_uid: str):
         x_size, y_size, z_size = dimensions
         metadata = {
             "uid": asset_uid,
-            "dimensions": {"x": x_size, "y": y_size, "z": z_size},
+            "dimensions": safe_round_dict({"x": x_size, "y": y_size, "z": z_size}, 3),
         }
 
-        return JSONResponse(content=metadata)
+        # return JSONResponse(content=metadata)
+        return metadata  # HACK?
 
     except HTTPException:
         raise
@@ -214,3 +218,35 @@ def locate_glb_file(asset_uid: str):
     except Exception as e:
         logger.error(f"Error serving .glb file path for asset {asset_uid}: {e}")
         raise HTTPException(status_code=500, detail="Failed to serve .glb file path")
+
+
+# NOTE: not sure whether what endpoint name is best.
+# other candidates: vlm, investigate, ai, ai_search, report, explain
+@router.get("/assets/report", response_model=str)
+def generate_report(
+    asset_uids: list[str] = Query(),
+    return_format: str = "markdown",
+):
+    """
+    Returns an LLM/VLM-consumable report with thumbnails and metadata.
+    """
+    if return_format != "markdown":
+        raise NotImplementedError("Only markdown is supported for now")
+    doc = ""
+    doc += "\n"
+    for uid in asset_uids:
+        doc += f"\n### {uid}"
+        doc += "\n"
+        doc += "\n**Thumbnails**:"
+        doc += "\n"
+        doc += "\nIsometric:"
+        doc += "\n"
+        # doc += f"\n![thumbnail]({get_asset_thumbnail(uid).path})"
+        doc += f"\n![thumbnail](http://localhost:2692/api/v0/assets/{uid}/thumbnail)"
+        doc += "\n"
+        doc += "\n**Metadata**:"
+        doc += "\n"
+        doc += f"\n{get_asset_metadata(uid)}"
+        doc += "\n"
+
+    return doc

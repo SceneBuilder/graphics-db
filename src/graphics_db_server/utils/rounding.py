@@ -25,6 +25,12 @@ def safe_round_list(iterable, ndigits):
     return [safe_round(num, ndigits) for num in iterable]
 
 
+def safe_round_dict(d, ndigits):
+    """Applies safe_round to each numeric value in a dictionary."""
+    return {key: safe_round(value, ndigits) if isinstance(value, (int, float)) else value
+            for key, value in d.items()}
+
+
 if __name__ == "__main__":
     print("Testing rounding behavior for large numbers:")
     print("Input: 12345.0")
@@ -42,3 +48,9 @@ if __name__ == "__main__":
     print("Input: 0.00045678")
     print(f"  round(0.00045678, 3): {round(0.00045678, 3)}")
     print(f"  safe_round(0.00045678, 3): {safe_round(0.00045678, 3)}")
+    print()
+
+    print("Testing safe_round_dict:")
+    test_dict = {"x": 12345.0, "y": 0.00045678, "z": "text", "count": 42}
+    print(f"Input: {test_dict}")
+    print(f"safe_round_dict(test_dict, 3): {safe_round_dict(test_dict, 3)}")
