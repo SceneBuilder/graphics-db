@@ -18,7 +18,7 @@ from graphics_db_server.core.config import (
 )
 from graphics_db_server.logging import logger
 from graphics_db_server.schemas.asset import AssetCreate
-from graphics_db_server.utils.extra_index import get_asset_details
+from graphics_db_server.utils import extra_index
 from graphics_db_server.utils.scale_validation import validate_asset_scales
 from graphics_db_server.utils.thumbnail import generate_thumbnail_from_glb
 
@@ -145,7 +145,9 @@ def load_objaverse_assets(
     if not candidate_uids:
         return []
 
-    logger.info(f"Found {len(candidate_uids)} candidate assets. Downloading GLB files for validation...")
+    logger.info(
+        f"Found {len(candidate_uids)} candidate assets. Downloading GLB files for validation..."
+    )
 
     # Download the GLB files for validation
     asset_paths = download_assets(candidate_uids)
@@ -168,9 +170,9 @@ def load_objaverse_assets(
         if limit is not None and len(valid_assets) >= limit:
             break
 
-
-
-    logger.info(f"Scale validation complete. {len(valid_assets)} out of {len(candidate_assets)} assets passed validation.")
+    logger.info(
+        f"Scale validation complete. {len(valid_assets)} out of {len(candidate_assets)} assets passed validation."
+    )
 
     return valid_assets
 
@@ -189,24 +191,28 @@ def download_assets(asset_ids: list[str]):
     return asset_paths
 
 
-def locate_assets(asset_ids: list[str]):
+def locate_assets(asset_ids: list[str], prioritize_rescaled=True):
     """
     Locates 3D assets inside the local Objaverse cache based on a list of asset UIDs.
-    
-    NOTE: This requires the extra_index.db sqlite file to be present. 
+
+    NOTE: This requires the extra_index.db sqlite file to be present.
 
     Args:
         asset_ids (list[str]): A list of asset UIDs to download.
+        prioritize_rescaled (bool): Whether to return rescaled asset file if exists (default: True)
+
+    Returns:
+        dict[str, str]: A dictionary mapping asset UIDs to their file paths.
     """
-    asset_paths = []
+    asset_paths = {}
     for id in asset_ids:
-        metadata = get_asset_details(id)
-        if metadata["misscaled"] == 1:
+        metadata = extra_index.get_asset_details(id)
+        if prioritize_rescaled and metadata["misscaled"] == 1:
             path = metadata["fs_path_rescaled"]
         else:
             path = metadata["fs_path"]
-        asset_paths.append(path)
-    
+        asset_paths[id] = path
+
     return asset_paths
 
 
@@ -245,3 +251,6 @@ if __name__ == "__main__":
     # Test with validation (slower, downloads GLB files)
     assets = load_objaverse_assets(limit=3, validate_scale=True)
     print(f"Loaded {len(assets)} validated assets")
+    
+    located_asset = locate_assets(["03c68480c9c34174826f836b6c95c27e"])
+    print(f"{located_asset=}")

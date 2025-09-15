@@ -1,4 +1,6 @@
 import base64
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel
@@ -41,7 +43,25 @@ def search_assets(query: str, top_k: int = 5, validate_scale: bool = False):
         return []
     elif validate_scale:
         asset_uids = [asset["uid"] for asset in results]
-        asset_paths = download_assets(asset_uids)
+
+        # Attempt to locate in FS first, then attempt download
+        asset_paths = locate_assets(asset_uids)
+        found_uids = []
+        for path in asset_paths:
+            uid = Path(path).stem.replace("_rescaled", "")
+            found_uids.append(uid)
+        missing_uids = list(set(asset_uids) - set(found_uids))
+        if missing_uids:  # is not empty
+            asset_paths += download_assets(missing_uids)
+            # TODO: recoup paths for missing uids *while preserving order*
+        
+        # TODO: if uid has entry in extra_index db, use its information instead of
+        #       relying on heuristic-based `validate_asset_scales()`.
+        # NOTE: The best way to achieve the necessary changes in behavior
+        #       is to make `validate_asset_scales()` take in uids instead of paths
+        #       so that it only performs asset location/download only when necessary,
+        #       and prefer to lookup extra_index_db.
+        #       That way, the complicated locate-or-download logic can be simplified/hidden too
         validation_results = validate_asset_scales(
             asset_paths, SCALE_MAX_LENGTH_THRESHOLD
         )
@@ -76,6 +96,8 @@ def download_glb_file(asset_uid: str):
     Downloads the .glb file for a given asset UID.
     """
     try:
+        # TODO: check what dataset uid belongs to, and then do downstream
+        #       file search / download / access accordingly.
         asset_paths = download_assets([asset_uid])
 
         if asset_uid not in asset_paths:
@@ -98,9 +120,10 @@ def locate_glb_file(asset_uid: str):
     This is useful if the client application is running on the same PC or a shared filesystem.
     """
     try:
-        # TODO: check what dataset uid belongs to, and then do downstream
+        # TODO: check *what dataset* uid belongs to, and then do downstream
         #       file search / download / access accordingly.
         asset_paths = locate_assets([asset_uid])
+        # print(f"{asset_paths=}")  # DEBUG
 
         if asset_uid not in asset_paths:
             raise HTTPException(status_code=404, detail="Asset not found")
@@ -121,7 +144,8 @@ def get_asset_metadata(asset_uid: str):
     Gets metadata for a given asset UID, including dimensions.
     """
     try:
-        asset_paths = download_assets([asset_uid])
+        # TODO: improve efficiency by utilizing extra_index db if uid exists in it
+        asset_paths = locate_assets([asset_uid]) or download_assets([asset_uid])  # singleton
 
         if asset_uid not in asset_paths:
             raise HTTPException(status_code=404, detail="Asset not found")

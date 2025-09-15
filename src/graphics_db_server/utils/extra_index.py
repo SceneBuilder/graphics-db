@@ -22,3 +22,21 @@ def get_asset_details(uuid_to_check: str) -> dict | None:
 
     conn.close()
     return dict(result) if result else None
+
+
+def test_get_asset_details():
+    """
+    Tests that get_asset_details returns None for non-existent UUID.
+    """
+    result = get_asset_details("non-existent-uuid")
+    assert result is None
+
+    # Test with a hardcoded UUID that should exist
+    result = get_asset_details("03c68480c9c34174826f836b6c95c27e")
+    assert result is not None
+    assert isinstance(result, dict)
+    assert "uuid" in result
+
+
+if __name__ == "__main__":
+    test_get_asset_details()
