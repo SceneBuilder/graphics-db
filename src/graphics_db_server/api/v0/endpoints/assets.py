@@ -54,7 +54,7 @@ def search_assets(query: str, top_k: int = 5, validate_scale: bool = False):
         if missing_uids:  # is not empty
             asset_paths += download_assets(missing_uids)
             # TODO: recoup paths for missing uids *while preserving order*
-        
+
         # TODO: if uid has entry in extra_index db, use its information instead of
         #       relying on heuristic-based `validate_asset_scales()`.
         # NOTE: The best way to achieve the necessary changes in behavior
@@ -65,29 +65,107 @@ def search_assets(query: str, top_k: int = 5, validate_scale: bool = False):
         validation_results = validate_asset_scales(
             asset_paths, SCALE_MAX_LENGTH_THRESHOLD
         )
-        return [asset for asset in results if validation_results.get(asset["uid"], False)]
+        return [
+            asset for asset in results if validation_results.get(asset["uid"], False)
+        ]
     return results
 
 
 class AssetThumbnailsRequest(BaseModel):
     asset_uids: list[str]
+    format: str = "urls"  # "urls" or "base64"
+
+
+@router.get("/assets/{asset_uid}/thumbnail")
+def get_asset_thumbnail(asset_uid: str):
+    """
+    Gets the thumbnail image for a given asset UID.
+    Returns the image file directly for use in markdown or web pages.
+    """
+    try:
+        asset_paths = locate_assets([asset_uid]) or download_assets([asset_uid])  # singleton
+        if asset_uid not in asset_paths:
+            raise HTTPException(status_code=404, detail="Asset not found")
+        
+        asset_thumbnails = get_thumbnails(asset_paths)
+        if asset_uid not in asset_thumbnails:
+            raise HTTPException(status_code=404, detail="Thumbnail not found")
+
+        return FileResponse(
+            path=asset_thumbnails[asset_uid],
+            media_type="image/png",
+            filename=f"{asset_uid}_thumbnail.png",
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error serving thumbnail for asset {asset_uid}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to serve thumbnail")
 
 
 @router.post("/assets/thumbnails")
 def get_asset_thumbnails(request: AssetThumbnailsRequest):
     """
     Gets asset thumbnails for a list of asset UIDs.
+    Returns either base64-encoded data or URLs based on format parameter.
     """
     asset_paths = download_assets(request.asset_uids)
-    asset_thumbnails = get_thumbnails(asset_paths)
 
     response_data = {}
-    for uid, image_path in asset_thumbnails.items():
-        with open(image_path, "rb") as f:
-            image_data = f.read()
-        response_data[uid] = base64.b64encode(image_data).decode("utf-8")
+
+    if request.format == "base64":
+        # Return base64-encoded image data
+        asset_thumbnails = get_thumbnails(asset_paths)
+        for uid, image_path in asset_thumbnails.items():
+            with open(image_path, "rb") as f:
+                image_data = f.read()
+            response_data[uid] = base64.b64encode(image_data).decode("utf-8")
+    else:  # default to urls
+        # Return URLs pointing to the thumbnail endpoint
+        for uid in request.asset_uids:
+            if uid in asset_paths:
+                response_data[uid] = f"/api/v0/assets/{uid}/thumbnail"
 
     return JSONResponse(content=response_data)
+
+
+@router.get("/assets/{asset_uid}/metadata")
+def get_asset_metadata(asset_uid: str):
+    """
+    Gets metadata for a given asset UID, including dimensions.
+    """
+    try:
+        # TODO: improve efficiency by utilizing extra_index db if uid exists in it
+        asset_paths = locate_assets([asset_uid]) or download_assets(
+            [asset_uid]
+        )  # singleton
+
+        if asset_uid not in asset_paths:
+            raise HTTPException(status_code=404, detail="Asset not found")
+
+        glb_path = asset_paths[asset_uid]
+        success, dimensions, error = get_glb_dimensions(glb_path)
+
+        if not success:
+            logger.error(f"Error getting dimensions for asset {asset_uid}: {error}")
+            raise HTTPException(
+                status_code=500, detail="Failed to get asset dimensions"
+            )
+
+        x_size, y_size, z_size = dimensions
+        metadata = {
+            "uid": asset_uid,
+            "dimensions": {"x": x_size, "y": y_size, "z": z_size},
+        }
+
+        return JSONResponse(content=metadata)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting metadata for asset {asset_uid}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get asset metadata")
 
 
 @router.get("/assets/download/{asset_uid}/glb")
@@ -136,41 +214,3 @@ def locate_glb_file(asset_uid: str):
     except Exception as e:
         logger.error(f"Error serving .glb file path for asset {asset_uid}: {e}")
         raise HTTPException(status_code=500, detail="Failed to serve .glb file path")
-
-
-@router.get("/assets/{asset_uid}/metadata")
-def get_asset_metadata(asset_uid: str):
-    """
-    Gets metadata for a given asset UID, including dimensions.
-    """
-    try:
-        # TODO: improve efficiency by utilizing extra_index db if uid exists in it
-        asset_paths = locate_assets([asset_uid]) or download_assets([asset_uid])  # singleton
-
-        if asset_uid not in asset_paths:
-            raise HTTPException(status_code=404, detail="Asset not found")
-
-        glb_path = asset_paths[asset_uid]
-        success, dimensions, error = get_glb_dimensions(glb_path)
-
-        if not success:
-            logger.error(f"Error getting dimensions for asset {asset_uid}: {error}")
-            raise HTTPException(status_code=500, detail="Failed to get asset dimensions")
-
-        x_size, y_size, z_size = dimensions
-        metadata = {
-            "uid": asset_uid,
-            "dimensions": {
-                "x": x_size,
-                "y": y_size,
-                "z": z_size
-            }
-        }
-
-        return JSONResponse(content=metadata)
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting metadata for asset {asset_uid}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to get asset metadata")
