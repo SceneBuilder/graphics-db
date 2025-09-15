@@ -20,6 +20,11 @@ def safe_round(num, ndigits):
         return round_to_sigfigs(num, ndigits)
 
 
+def safe_round_list(iterable, ndigits):
+    """Applies safe_round to each numeric element in an iterable."""
+    return [safe_round(num, ndigits) for num in iterable]
+
+
 if __name__ == "__main__":
     print("Testing rounding behavior for large numbers:")
     print("Input: 12345.0")

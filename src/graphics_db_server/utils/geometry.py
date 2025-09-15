@@ -4,7 +4,7 @@ from typing import Optional
 import pyvista as pv
 
 from graphics_db_server.logging import logger
-from graphics_db_server.utils.rounding import safe_round
+from graphics_db_server.utils.rounding import safe_round, safe_round_list
 
 
 def calc_optimal_scaling_factor(
@@ -32,7 +32,7 @@ def calc_optimal_scaling_factor(
     geometric_mean = math.pow(math.prod(scale_factors), 1.0 / len(scale_factors))
 
     logger.debug(
-        f"[tool] calc_optimal_scaling_factor(): {original_dims} → {desired_dims}; SF={safe_round(geometric_mean, 3)}"
+        f"[tool] calc_optimal_scaling_factor(): {safe_round_list(original_dims, 3)} → {safe_round_list(desired_dims, 3)}; SF={safe_round(geometric_mean, 3)}"
     )
 
     return safe_round(geometric_mean, 3)
