@@ -59,6 +59,7 @@ services:
     volumes:
       - ./src:/app/src
       - ~/.objaverse:/root/.objaverse
+      - /media/ycho358/Expansion/.cache/huggingface/datasets:/media/ycho358/Expansion/.cache/huggingface/datasets
     depends_on:
       db:
         condition: service_healthy
