@@ -159,7 +159,7 @@ def get_asset_metadata(asset_uid: str):
         x_size, y_size, z_size = dimensions
         metadata = {
             "uid": asset_uid,
-            "dimensions": safe_round_dict({"x": x_size, "y": y_size, "z": z_size}, 3),
+            "dimensions": safe_round_dict({"x": x_size, "y": y_size, "z": z_size}, 2),
         }
 
         # return JSONResponse(content=metadata)
@@ -242,7 +242,8 @@ def generate_report(
         doc += "\nIsometric:"
         doc += "\n"
         # doc += f"\n![thumbnail]({get_asset_thumbnail(uid).path})"
-        doc += f"\n![thumbnail](http://localhost:2692/api/v0/assets/{uid}/thumbnail)"
+        # doc += f"\n![thumbnail](http://localhost:2692/api/v0/assets/{uid}/thumbnail)"
+        doc += f"\n![thumbnail_for_{uid}](http://localhost:2692/api/v0/assets/{uid}/thumbnail)"
         doc += "\n"
         doc += "\n**Metadata**:"
         doc += "\n"

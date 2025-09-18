@@ -191,7 +191,7 @@ def download_assets(asset_ids: list[str]):
     return asset_paths
 
 
-def locate_assets(asset_ids: list[str], prioritize_rescaled=True):
+def locate_assets(asset_ids: list[str], prioritize_rescaled=True) -> dict[str, str]:
     """
     Locates 3D assets inside the local Objaverse cache based on a list of asset UIDs.
 
