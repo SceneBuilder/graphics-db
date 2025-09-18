@@ -231,13 +231,14 @@ def get_thumbnails(asset_paths: dict[str, str]) -> dict[str, Path]:
         glb_path = Path(glb_path_str).resolve()
         output_path = glb_path.with_suffix(".png")
 
-        generate_thumbnail_from_glb(
-            glb_path=str(glb_path),
-            output_path=str(output_path),
-            resolution=THUMBNAIL_RESOLUTION,
-        )
+        if not output_path.exists():
+            generate_thumbnail_from_glb(
+                glb_path=str(glb_path),
+                output_path=str(output_path),
+                resolution=THUMBNAIL_RESOLUTION,
+            )
 
-        if output_path.exists():
+        if output_path.exists():  # NOTE: should this be changed to an assert?
             asset_thumbnails[uid] = output_path
 
     return asset_thumbnails
