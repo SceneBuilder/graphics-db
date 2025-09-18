@@ -1,3 +1,7 @@
+"""
+TODO: explain the purpose of this example
+"""
+
 import re
 import requests
 import mimetypes
@@ -6,6 +10,7 @@ from urllib.parse import urlparse
 
 # Params
 API_BASE_URL = "http://localhost:2692"
+OUTPUT_DIR = Path(__file__).parent / "vlm_search"
 
 
 def download_image(url, output_dir="images", name=None):
@@ -25,7 +30,7 @@ def download_image(url, output_dir="images", name=None):
     return relative_path
 
 
-def process_markdown_images(markdown_content, output_dir="images"):
+def process_markdown_images(markdown_content, output_dir: Path = OUTPUT_DIR):
     def replacer(match):
         alt_text, url = match.groups()
         local_path = download_image(url, output_dir, name=alt_text)
@@ -34,7 +39,8 @@ def process_markdown_images(markdown_content, output_dir="images"):
     return re.sub(r"!\[([^\]]*)\]\((http[^)]+)\)", replacer, markdown_content)
 
 
-def main(query_text, output_dir: Path = Path(__file__).parent):
+def generate_report(query_text, output_dir : Path = OUTPUT_DIR):
+    # Search for assets
     assets_response = requests.get(
         f"{API_BASE_URL}/api/v0/assets/search",
         params={"query": query_text},
@@ -42,6 +48,7 @@ def main(query_text, output_dir: Path = Path(__file__).parent):
     print(f"Query: {query_text}. Response: {assets_response}")
     assets = assets_response.json()
 
+    # Create report (with thumbnails and metadata to help VLM's decision making)
     report_response = requests.get(
         f"{API_BASE_URL}/api/v0/assets/report",
         params={"asset_uids": [asset["uid"] for asset in assets]},
@@ -52,7 +59,10 @@ def main(query_text, output_dir: Path = Path(__file__).parent):
     # Transform thumbnail URLs into local paths
     report = process_markdown_images(report, output_dir)
     print("Transformed thumbnail URLs into local paths")
+    return report
 
+
+def save_report(report, output_dir: Path = OUTPUT_DIR):    
     # Save the markdown report to a file
     output_file = output_dir / "output_search_report.md"
     with open(output_file, "w") as f:
@@ -60,5 +70,10 @@ def main(query_text, output_dir: Path = Path(__file__).parent):
     print(f"Saved search report to {output_file}")
 
 
+def main():
+    report = generate_report(query_text="a blue car")
+    save_report(report)
+
+
 if __name__ == "__main__":
-    main("a blue car")
+    main()
