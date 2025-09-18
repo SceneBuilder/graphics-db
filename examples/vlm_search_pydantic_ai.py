@@ -30,7 +30,7 @@ def download_image(url, output_dir="images", name=None):
     return relative_path
 
 
-def process_markdown_images(markdown_content, output_dir: Path = OUTPUT_DIR):
+def flatten_markdown_images(markdown_content, output_dir: Path = OUTPUT_DIR):
     def replacer(match):
         alt_text, url = match.groups()
         local_path = download_image(url, output_dir, name=alt_text)
@@ -57,7 +57,7 @@ def generate_report(query_text, output_dir : Path = OUTPUT_DIR):
     print("Generated report")
 
     # Transform thumbnail URLs into local paths
-    report = process_markdown_images(report, output_dir)
+    report = flatten_markdown_images(report, output_dir)
     print("Transformed thumbnail URLs into local paths")
     return report
 
