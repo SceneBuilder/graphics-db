@@ -74,7 +74,8 @@ def search_assets(query: str, top_k: int = 5, validate_scale: bool = False):
 
 class AssetThumbnailsRequest(BaseModel):
     asset_uids: list[str]
-    format: str = "urls"  # "urls" or "base64"
+    format: str = "urls"  # "urls" or "base64" or "path"
+    # TODO: change urls → url, after confirming it is better
 
 
 @router.get("/assets/{asset_uid}/thumbnail")
@@ -124,6 +125,10 @@ def get_asset_thumbnails(request: AssetThumbnailsRequest):
             with open(image_path, "rb") as f:
                 image_data = f.read()
             response_data[uid] = base64.b64encode(image_data).decode("utf-8")
+    elif request.format == "path":
+        for uid in request.asset_uids:
+            if uid in asset_paths:
+                response_data[uid] = f"/api/v0/assets/{uid}/thumbnail"
     else:  # default to urls
         # Return URLs pointing to the thumbnail endpoint
         for uid in request.asset_uids:
@@ -225,12 +230,13 @@ def locate_glb_file(asset_uid: str):
 @router.get("/assets/report", response_model=str)
 def generate_report(
     asset_uids: list[str] = Query(),
-    return_format: str = "markdown",
+    report_format: str = "markdown",
+    image_format: str = "url",
 ):
     """
     Returns an LLM/VLM-consumable report with thumbnails and metadata.
     """
-    if return_format != "markdown":
+    if report_format != "markdown":
         raise NotImplementedError("Only markdown is supported for now")
     doc = ""
     doc += "\n"
@@ -243,7 +249,12 @@ def generate_report(
         doc += "\n"
         # doc += f"\n![thumbnail]({get_asset_thumbnail(uid).path})"
         # doc += f"\n![thumbnail](http://localhost:2692/api/v0/assets/{uid}/thumbnail)"
-        doc += f"\n![thumbnail_for_{uid}](http://localhost:2692/api/v0/assets/{uid}/thumbnail)"
+        match image_format:
+            case "url":
+                doc += f"\n![thumbnail_for_{uid}](http://localhost:2692/api/v0/assets/{uid}/thumbnail)"
+            case "path":
+                asset_paths = locate_assets([uid])  # or download_assets([uid])
+                doc += f"\n![thumbnail_for_{uid}]({get_thumbnails(asset_paths)[uid]})"
         doc += "\n"
         doc += "\n**Metadata**:"
         doc += "\n"
