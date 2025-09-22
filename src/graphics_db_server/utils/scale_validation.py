@@ -178,6 +178,26 @@ def scale_glb_model_pyvista(
         return False
 
 
+def cleanup_blender_memory():  # NOTE: doesn't seem to work
+    """Periodically clear Blender memory for batch operations."""
+    try:
+        import bpy
+        import gc
+        
+        # Clear scene
+        bpy.ops.object.select_all(action='SELECT')
+        bpy.ops.object.delete()
+        
+        # Purge all orphaned data
+        bpy.ops.outliner.orphans_purge(do_local_ids=True, do_linked_ids=True, do_recursive=True)
+        
+        # Force Python garbage collection
+        gc.collect()
+        
+    except ImportError:
+        pass
+
+
 def scale_glb_model_blender(
     input_path: str, output_path: str, scale_factor: float
 ) -> bool:
@@ -269,6 +289,10 @@ def scale_glb_model_blender(
         bpy.ops.export_scene.gltf(
             filepath=str(output_path), export_format="GLB", use_selection=True
         )
+        
+        # Clean up memory to prevent leaks
+        cleanup_blender_memory()
+        
         return True
 
     except Exception as e:

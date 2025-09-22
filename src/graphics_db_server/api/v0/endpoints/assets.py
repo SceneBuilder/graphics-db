@@ -185,7 +185,7 @@ def download_glb_file(asset_uid: str):
     try:
         # TODO: check what dataset uid belongs to, and then do downstream
         #       file search / download / access accordingly.
-        asset_paths = download_assets([asset_uid])
+        asset_paths = locate_assets([asset_uid]) or download_assets([asset_uid])
 
         if asset_uid not in asset_paths:
             raise HTTPException(status_code=404, detail="Asset not found")

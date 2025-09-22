@@ -2,9 +2,9 @@
 TODO: explain the purpose of this example
 """
 
+import mimetypes
 import re
 import requests
-import mimetypes
 from pathlib import Path
 from urllib.parse import urlparse
 

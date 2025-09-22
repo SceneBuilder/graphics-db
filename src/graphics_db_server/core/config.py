@@ -43,6 +43,9 @@ VLM_PROVIDER_BASE_URL = "http://localhost:8000/v1"
 USE_MEAN_POOL = True
 THUMBNAIL_RESOLUTION = 1024
 
+# Logfire
+LOGFIRE_SERVICE_NAME = "graphics-db"
+
 load_dotenv()
 
 

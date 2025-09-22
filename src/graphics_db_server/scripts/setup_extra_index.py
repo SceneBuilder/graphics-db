@@ -45,6 +45,7 @@ from graphics_db_server.core.config import (
     VLM_MODEL_NAME,
     VLM_PROVIDER_BASE_URL,
 )
+from graphics_db_server.core.config import LOGFIRE_SERVICE_NAME
 from graphics_db_server.logging import logger
 from graphics_db_server.tools.read_file import read_media_file
 from graphics_db_server.utils.geometry import (
@@ -70,7 +71,7 @@ ROUND_DIGITS = 3
 DEBUG = True
 # DEBUG = False
 
-logfire.configure(service_name="graphics-db")
+logfire.configure(service_name=LOGFIRE_SERVICE_NAME)
 logfire.instrument_pydantic_ai()
 
 
