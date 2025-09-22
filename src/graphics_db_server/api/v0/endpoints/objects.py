@@ -43,15 +43,15 @@ def search_objects(query: str, top_k: int = 5, validate_scale: bool = False):
         logger.debug(f"No results found for query: {query}")
         return []
     elif validate_scale:
-        object_uids = [object["uid"] for object in results]
+        uids = [object["uid"] for object in results]
 
         # Attempt to locate in FS first, then attempt download
-        object_paths = locate_objects(object_uids)
+        object_paths = locate_objects(uids)
         found_uids = []
         for path in object_paths:
             uid = Path(path).stem.replace("_rescaled", "")
             found_uids.append(uid)
-        missing_uids = list(set(object_uids) - set(found_uids))
+        missing_uids = list(set(uids) - set(found_uids))
         if missing_uids:  # is not empty
             object_paths += download_objects(missing_uids)
             # TODO: recoup paths for missing uids *while preserving order*
@@ -73,7 +73,7 @@ def search_objects(query: str, top_k: int = 5, validate_scale: bool = False):
 
 
 class ObjectThumbnailsRequest(BaseModel):
-    object_uids: list[str]
+    uids: list[str]
     format: str = "urls"  # "urls" or "base64" or "path"
     # TODO: change urls → url, after confirming it is better
 
@@ -114,7 +114,7 @@ def get_object_thumbnails(request: ObjectThumbnailsRequest):
     Gets object thumbnails for a list of 3D object UIDs.
     Returns either base64-encoded data or URLs based on format parameter.
     """
-    object_paths = download_objects(request.object_uids)
+    object_paths = download_objects(request.uids)
 
     response_data = {}
 
@@ -126,12 +126,12 @@ def get_object_thumbnails(request: ObjectThumbnailsRequest):
                 image_data = f.read()
             response_data[uid] = base64.b64encode(image_data).decode("utf-8")
     elif request.format == "path":
-        for uid in request.object_uids:
+        for uid in request.uids:
             if uid in object_paths:
                 response_data[uid] = f"/api/v0/objects/{uid}/thumbnail"
     else:  # default to urls
         # Return URLs pointing to the thumbnail endpoint
-        for uid in request.object_uids:
+        for uid in request.uids:
             if uid in object_paths:
                 response_data[uid] = f"/api/v0/objects/{uid}/thumbnail"
 
@@ -228,8 +228,8 @@ def locate_object_glb(object_uid: str):
 # NOTE: not sure whether what endpoint name is best.
 # other candidates: vlm, investigate, ai, ai_search, report, explain
 @router.get("/objects/report", response_model=str)
-def generate_object_report(
-    object_uids: list[str] = Query(),
+def generate_object_search_report(
+    uids: list[str] = Query(),
     report_format: str = "markdown",
     image_format: str = "url",
 ):
@@ -240,7 +240,7 @@ def generate_object_report(
         raise NotImplementedError("Only markdown is supported for now")
     doc = ""
     doc += "\n"
-    for uid in object_uids:
+    for uid in uids:
         doc += f"\n### {uid}"
         doc += "\n"
         doc += "\n**Thumbnails**:"

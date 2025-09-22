@@ -51,7 +51,7 @@ def generate_report(query_text, output_dir: Path = OUTPUT_DIR):
     # Create report (with thumbnails and metadata to help VLM's decision making)
     report_response = requests.get(
         f"{API_BASE_URL}/api/v0/objects/report",
-        params={"object_uids": [object["uid"] for object in objects]},
+        params={"uids": [object["uid"] for object in objects]},
     )
     report = report_response.json()
     print("Generated report")

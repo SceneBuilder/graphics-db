@@ -15,18 +15,18 @@ def test_thumbnail_retrieval():
     Tests getting object thumbnails.
     """
     search_results = test_object_search("a blue car")
-    object_uids = [object["uid"] for object in search_results]
+    uids = [object["uid"] for object in search_results]
 
     response = requests.post(
         f"{GRAPHICS_DB_BASE_URL}/api/v0/objects/thumbnails",
-        json={"object_uids": object_uids},
+        json={"uids": uids},
     )
-    logger.info(f"object UIDs: {object_uids}. Response: {response}")
+    logger.info(f"object UIDs: {uids}. Response: {response}")
     assert response.status_code == 200
     response_json = response.json()
     assert len(response_json) > 0
     for uid, image_data in response_json.items():
-        assert uid in object_uids
+        assert uid in uids
         # Check if the image data is a valid base64 string
         decoded_image = base64.b64decode(image_data)
         assert decoded_image

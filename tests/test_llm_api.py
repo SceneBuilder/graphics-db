@@ -17,7 +17,7 @@ def test_report_generation(query_text: str):
     objects = objects_response.json()
     response = requests.get(
         f"{GRAPHICS_DB_BASE_URL}/api/v0/objects/report",
-        params={"object_uids": [object["uid"] for object in objects]},
+        params={"uids": [object["uid"] for object in objects]},
     )
     assert response.status_code == 200
     response_json = response.json()
