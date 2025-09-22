@@ -5,7 +5,8 @@ import io
 
 from PIL import Image
 
-from src.graphics_db_server.logging import logger
+from graphics_db_server.core.config import GRAPHICS_DB_BASE_URL
+from graphics_db_server.logging import logger
 from test_object_retrieval import test_object_search
 
 
@@ -17,7 +18,7 @@ def test_thumbnail_retrieval():
     object_uids = [object["uid"] for object in search_results]
 
     response = requests.post(
-        "http://localhost:2692/api/v0/objects/thumbnails",
+        f"{GRAPHICS_DB_BASE_URL}/api/v0/objects/thumbnails",
         json={"object_uids": object_uids},
     )
     logger.info(f"object UIDs: {object_uids}. Response: {response}")

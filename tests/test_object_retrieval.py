@@ -1,6 +1,7 @@
 import requests
 
-from src.graphics_db_server.logging import logger
+from graphics_db_server.core.config import GRAPHICS_DB_BASE_URL
+from graphics_db_server.logging import logger
 
 
 def test_object_search(query_text: str):
@@ -8,7 +9,7 @@ def test_object_search(query_text: str):
     Tests graphics asset semantic search functionality.
     """
     response = requests.get(
-        "http://localhost:2692/api/v0/objects/search",
+        f"{GRAPHICS_DB_BASE_URL}/api/v0/objects/search",
         params={"query": query_text},
     )
     logger.info(f"Query: {query_text}. Response: {response}")
