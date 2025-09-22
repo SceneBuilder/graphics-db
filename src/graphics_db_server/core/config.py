@@ -38,6 +38,10 @@ SCALE_MAX_LENGTH_THRESHOLD = 100.0  # filter out centimeter-based (or just large
 # VLM_MODEL_NAME = "Qwen/Qwen2.5-VL-3B-Instruct-AWQ"
 VLM_MODEL_NAME = "Qwen/Qwen2.5-VL-7B-Instruct-AWQ"
 VLM_PROVIDER_BASE_URL = "http://localhost:8000/v1"
+# Poly Haven API
+POLYHAVEN_API_BASE_URL = "https://api.polyhaven.com"
+POLYHAVEN_USER_AGENT = "graphics-db-server/0.0.1"
+POLYHAVEN_CACHE_DIR = os.path.expanduser("~/.polyhaven_cache")
 
 # App
 USE_MEAN_POOL = True

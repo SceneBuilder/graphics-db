@@ -1,4 +1,3 @@
-import uuid
 from typing import Optional
 
 import numpy as np
@@ -9,9 +8,9 @@ class Asset(BaseModel):
     uid: str
     url: str
     tags: Optional[list[str]] = []
-    source: str | None = None # TEMP
-    license: str | None = None # TEMP
-    # sourceId: str  # NOTE: let's try not to keep this unless really necessary
+    source: str | None = None
+    license: str | None = None
+    asset_type: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
