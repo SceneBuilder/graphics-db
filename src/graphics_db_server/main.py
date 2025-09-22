@@ -2,7 +2,7 @@ import psycopg
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from graphics_db_server.api.v0.endpoints import assets, materials
+from graphics_db_server.api.v0.endpoints import objects, materials
 from graphics_db_server.db.session import get_db_connection
 from graphics_db_server.logging import configure_logging, logger
 
@@ -23,7 +23,7 @@ app.add_middleware(
 )
 
 # Purpose-specific endpoints
-app.include_router(assets.router, prefix="/api/v0", tags=["Assets"])
+app.include_router(objects.router, prefix="/api/v0", tags=["3D Objects"])
 app.include_router(materials.router, prefix="/api/v0", tags=["Surface Materials"])
 
 

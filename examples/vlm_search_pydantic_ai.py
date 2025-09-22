@@ -39,19 +39,19 @@ def flatten_markdown_images(markdown_content, output_dir: Path = OUTPUT_DIR):
     return re.sub(r"!\[([^\]]*)\]\((http[^)]+)\)", replacer, markdown_content)
 
 
-def generate_report(query_text, output_dir : Path = OUTPUT_DIR):
-    # Search for assets
-    assets_response = requests.get(
-        f"{API_BASE_URL}/api/v0/assets/search",
+def generate_report(query_text, output_dir: Path = OUTPUT_DIR):
+    # Search for objects
+    objects_response = requests.get(
+        f"{API_BASE_URL}/api/v0/objects/search",
         params={"query": query_text},
     )
-    print(f"Query: {query_text}. Response: {assets_response}")
-    assets = assets_response.json()
+    print(f"Query: {query_text}. Response: {objects_response}")
+    objects = objects_response.json()
 
     # Create report (with thumbnails and metadata to help VLM's decision making)
     report_response = requests.get(
-        f"{API_BASE_URL}/api/v0/assets/report",
-        params={"asset_uids": [asset["uid"] for asset in assets]},
+        f"{API_BASE_URL}/api/v0/objects/report",
+        params={"object_uids": [object["uid"] for object in objects]},
     )
     report = report_response.json()
     print("Generated report")
@@ -62,7 +62,7 @@ def generate_report(query_text, output_dir : Path = OUTPUT_DIR):
     return report
 
 
-def save_report(report, output_dir: Path = OUTPUT_DIR):    
+def save_report(report, output_dir: Path = OUTPUT_DIR):
     # Save the markdown report to a file
     output_file = output_dir / "output_search_report.md"
     with open(output_file, "w") as f:

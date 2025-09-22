@@ -3,12 +3,12 @@ import requests
 from src.graphics_db_server.logging import logger
 
 
-def test_asset_search(query_text: str):
+def test_object_search(query_text: str):
     """
     Tests graphics asset semantic search functionality.
     """
     response = requests.get(
-        "http://localhost:2692/api/v0/assets/search",
+        "http://localhost:2692/api/v0/objects/search",
         params={"query": query_text},
     )
     logger.info(f"Query: {query_text}. Response: {response}")
@@ -18,6 +18,5 @@ def test_asset_search(query_text: str):
     return response_json
 
 
-
 if __name__ == "__main__":
-    test_asset_search("a blue car")
+    test_object_search("a blue car")
