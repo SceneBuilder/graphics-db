@@ -1,0 +1,78 @@
+# This is an exact copy of docker-compose.yaml, with names and ports appended with 2 (or shifted by 1)
+# to allow simultaneous usage of two `graphics-db-server` instances (for collaborative SSH remote dev).
+
+services:
+  db2:
+    # image: pgvector/pgvector:pg17
+    image: timescale/timescaledb-ha:pg17
+    
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      
+    env_file:
+      - .env
+
+    ports:
+      - "5433:5432" # postgres
+      
+    volumes: # for data persistence
+      - postgres_data2:/var/lib/postgresql/data2
+    
+    # auto-restart on crash
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  db-setup2:
+    image: graphics-db-server-setup
+    build:
+      context: .
+      dockerfile: Dockerfile.setup
+    profiles:
+      - setup
+    depends_on:
+      db2:
+        condition: service_healthy
+    env_file:
+        - .env
+
+  index2:
+    image: graphics-db-server-setup
+    profiles:
+      - setup
+    depends_on:
+      db-setup2:
+        condition: service_completed_successfully
+    env_file:
+        - .env
+    # volumes:
+    #   - ~/.objaverse:/root/.objaverse
+    command: python src/graphics_db_server/scripts/ingest_data.py
+
+  api2:
+    image: graphics-db-server-setup
+    ports:
+      - "2693:2693"
+    volumes:
+      - ./src:/app/src
+      - ~/.objaverse:/root/.objaverse
+      - /media/ycho358/Expansion/.cache/huggingface/datasets:/media/ycho358/Expansion/.cache/huggingface/datasets
+    depends_on:
+      db2:
+        condition: service_healthy
+      # db-setup:
+      #   condition: service_completed_successfully
+      # index:
+      #   condition: service_completed_successfully
+    env_file:
+      - .env
+    command: uvicorn src.graphics_db_server.main:app --host 0.0.0.0 --port 2693 --reload
+
+volumes:
+  postgres_data2:
