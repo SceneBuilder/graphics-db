@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel
 
-from graphics_db_server.core.config import SCALE_MAX_LENGTH_THRESHOLD
+from graphics_db_server.core.config import GRAPHICS_DB_BASE_URL, SCALE_MAX_LENGTH_THRESHOLD
 from graphics_db_server.db.session import get_db_connection
 from graphics_db_server.db import crud
 from graphics_db_server.embeddings.clip import get_clip_embeddings
@@ -248,10 +248,10 @@ def generate_object_report(
         doc += "\nIsometric:"
         doc += "\n"
         # doc += f"\n![thumbnail]({get_object_thumbnail(uid).path})"
-        # doc += f"\n![thumbnail](http://localhost:2692/api/v0/objects/{uid}/thumbnail)"
+        # doc += f"\n![thumbnail]{GRAPHICS_DB_BASE_URL}/api/v0/objects/{uid}/thumbnail)"
         match image_format:
             case "url":
-                doc += f"\n![thumbnail_for_{uid}](http://localhost:2692/api/v0/objects/{uid}/thumbnail)"
+                doc += f"\n![thumbnail_for_{uid}]({GRAPHICS_DB_BASE_URL}/api/v0/objects/{uid}/thumbnail)"
             case "path":
                 object_paths = locate_objects([uid])  # or download_objects([uid])
                 doc += f"\n![thumbnail_for_{uid}]({get_thumbnails(object_paths)[uid]})"
