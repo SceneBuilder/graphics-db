@@ -12,7 +12,7 @@ from graphics_db_server.schemas.asset import Asset
 from graphics_db_server.logging import logger
 
 
-def search_assets(
+def search_objects(
     conn,
     query_embedding_clip: np.ndarray,
     query_embedding_sbert: np.ndarray,

@@ -19,7 +19,7 @@ from graphics_db_server.core.config import (
 from graphics_db_server.logging import logger
 from graphics_db_server.schemas.asset import AssetCreate
 from graphics_db_server.utils import extra_index
-from graphics_db_server.utils.scale_validation import validate_asset_scales
+from graphics_db_server.utils.scale_validation import validate_object_scales
 from graphics_db_server.utils.thumbnail import generate_thumbnail_from_glb
 
 
@@ -83,23 +83,23 @@ def load_objaverse_assets(
     scale_resolution_strategy: str = "reject",
 ) -> list[AssetCreate]:
     """
-    Loads asset metadata from the objaverse dataset.
+    Loads 3D object metadata from the objaverse dataset.
 
     Args:
-        limit: Maximum number of assets to return
+        limit: Maximum number of objects to return
         validate_scale: If True, downloads GLB files and validates their scale
         max_edge_length: Maximum allowed edge length in meters for scale validation (only used if validate_scale=True)
 
     Returns:
-        List of AssetCreate objects
+        List of AssetCreate objects (representing 3D objects)
     """
     # NOTE: this will download a ~3GB file on first run.
     annotations = objaverse.load_annotations()
     clip_embedding_map = _load_embedding_map("clip")
     sbert_embedding_map = _load_embedding_map("sbert")
 
-    # First, collect candidate assets based on metadata
-    candidate_assets = []
+    # First, collect candidate objects based on metadata
+    candidate_objects = []
     candidate_uids = []
 
     for uid, annotation in annotations.items():
@@ -120,7 +120,7 @@ def load_objaverse_assets(
             else:
                 raise NotImplementedError()
 
-        asset = AssetCreate(
+        object_asset = AssetCreate(
             uid=uid,
             url=annotation.get("viewerUrl"),  # NOTE: there's also uri
             tags=_get_tag_names(annotation.get("tags")),
@@ -130,105 +130,105 @@ def load_objaverse_assets(
             clip_embedding=clip_embedding,
             sbert_embedding=sbert_embedding,
         )
-        candidate_assets.append(asset)
+        candidate_objects.append(object_asset)
         candidate_uids.append(uid)
 
         # If validation is enabled and we have many candidates, collect more to account for rejections
         target_candidates = limit * 2 if validate_scale and limit is not None else limit
-        if target_candidates is not None and len(candidate_assets) >= target_candidates:
+        if target_candidates is not None and len(candidate_objects) >= target_candidates:
             break
 
-    # If no scale validation is needed, return the assets directly
+    # If no scale validation is needed, return the objects directly
     if not validate_scale:
-        return candidate_assets[:limit] if limit is not None else candidate_assets
+        return candidate_objects[:limit] if limit is not None else candidate_objects
 
     # Scale validation path
     if not candidate_uids:
         return []
 
     logger.info(
-        f"Found {len(candidate_uids)} candidate assets. Downloading GLB files for validation..."
+        f"Found {len(candidate_uids)} candidate objects. Downloading GLB files for validation..."
     )
 
     # Download the GLB files for validation
-    asset_paths = download_assets(candidate_uids)
+    object_paths = download_objects(candidate_uids)
 
-    logger.info(f"Downloaded {len(asset_paths)} GLB files. Validating scales...")
+    logger.info(f"Downloaded {len(object_paths)} GLB files. Validating scales...")
 
     # Validate the scales
-    validation_results = validate_asset_scales(asset_paths, max_edge_length)
+    validation_results = validate_object_scales(object_paths, max_edge_length)
 
-    # Filter to only include valid assets
-    valid_assets = []
-    for asset in candidate_assets:
-        if validation_results.get(asset.uid, False):
-            valid_assets.append(asset)
+    # Filter to only include valid objects
+    valid_objects = []
+    for object_asset in candidate_objects:
+        if validation_results.get(object_asset.uid, False):
+            valid_objects.append(object_asset)
         else:
             if scale_resolution_strategy == "reject":
                 continue
             elif scale_resolution_strategy == "rescale":
                 raise NotImplementedError()
-        if limit is not None and len(valid_assets) >= limit:
+        if limit is not None and len(valid_objects) >= limit:
             break
 
     logger.info(
-        f"Scale validation complete. {len(valid_assets)} out of {len(candidate_assets)} assets passed validation."
+        f"Scale validation complete. {len(valid_objects)} out of {len(candidate_objects)} objects passed validation."
     )
 
-    return valid_assets
+    return valid_objects
 
 
-def download_assets(asset_ids: list[str]):
+def download_objects(object_ids: list[str]):
     """
-    Downloads 3D assets from Objaverse based on a list of asset UIDs.
+    Downloads 3D objects from Objaverse based on a list of object UIDs.
 
     Args:
-        asset_ids (list[str]): A list of asset UIDs to download.
+        object_ids (list[str]): A list of object UIDs to download.
     """
     processes = multiprocessing.cpu_count()
-    asset_paths = objaverse.load_objects(
-        uids=asset_ids, download_processes=int(processes / 2)
+    object_paths = objaverse.load_objects(
+        uids=object_ids, download_processes=int(processes / 2)
     )
-    return asset_paths
+    return object_paths
 
 
-def locate_assets(asset_ids: list[str], prioritize_rescaled=True) -> dict[str, str]:
+def locate_objects(object_ids: list[str], prioritize_rescaled=True) -> dict[str, str]:
     """
-    Locates 3D assets inside the local Objaverse cache based on a list of asset UIDs.
+    Locates 3D objects inside the local Objaverse cache based on a list of object UIDs.
 
     NOTE: This requires the extra_index.db sqlite file to be present.
 
     Args:
-        asset_ids (list[str]): A list of asset UIDs to download.
-        prioritize_rescaled (bool): Whether to return rescaled asset file if exists (default: True)
+        object_ids (list[str]): A list of object UIDs to locate.
+        prioritize_rescaled (bool): Whether to return rescaled object file if exists (default: True)
 
     Returns:
-        dict[str, str]: A dictionary mapping asset UIDs to their file paths.
+        dict[str, str]: A dictionary mapping object UIDs to their file paths.
     """
-    asset_paths = {}
-    for id in asset_ids:
+    object_paths = {}
+    for id in object_ids:
         metadata = extra_index.get_asset_details(id)
         if prioritize_rescaled and metadata["misscaled"] == 1:
             path = metadata["fs_path_rescaled"]
         else:
             path = metadata["fs_path"]
-        asset_paths[id] = path
+        object_paths[id] = path
 
-    return asset_paths
+    return object_paths
 
 
-def get_thumbnails(asset_paths: dict[str, str]) -> dict[str, Path]:
+def get_thumbnails(object_paths: dict[str, str]) -> dict[str, Path]:
     """
-    Generates thumbnails for a dictionary of asset paths.
+    Generates thumbnails for a dictionary of object paths.
 
     Args:
-        asset_paths: A dictionary mapping asset UIDs to their .glb file paths.
+        object_paths: A dictionary mapping object UIDs to their .glb file paths.
 
     Returns:
-        A dictionary mapping asset UIDs to the file paths of their generated thumbnails.
+        A dictionary mapping object UIDs to the file paths of their generated thumbnails.
     """
-    asset_thumbnails = {}
-    for uid, glb_path_str in asset_paths.items():
+    object_thumbnails = {}
+    for uid, glb_path_str in object_paths.items():
         glb_path = Path(glb_path_str).resolve()
         output_path = glb_path.with_suffix(".png")
 
@@ -240,19 +240,19 @@ def get_thumbnails(asset_paths: dict[str, str]) -> dict[str, Path]:
             )
 
         if output_path.exists():  # NOTE: should this be changed to an assert?
-            asset_thumbnails[uid] = output_path
+            object_thumbnails[uid] = output_path
 
-    return asset_thumbnails
+    return object_thumbnails
 
 
 if __name__ == "__main__":
     # Test without validation (fast)
-    assets = load_objaverse_assets(limit=3)
-    print(f"Loaded {len(assets)} assets without validation")
+    objects = load_objaverse_assets(limit=3)
+    print(f"Loaded {len(objects)} objects without validation")
 
     # Test with validation (slower, downloads GLB files)
-    assets = load_objaverse_assets(limit=3, validate_scale=True)
-    print(f"Loaded {len(assets)} validated assets")
-    
-    located_asset = locate_assets(["03c68480c9c34174826f836b6c95c27e"])
-    print(f"{located_asset=}")
+    objects = load_objaverse_assets(limit=3, validate_scale=True)
+    print(f"Loaded {len(objects)} validated objects")
+
+    located_object = locate_objects(["03c68480c9c34174826f836b6c95c27e"])
+    print(f"{located_object=}")
