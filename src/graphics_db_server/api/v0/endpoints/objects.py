@@ -253,7 +253,7 @@ def generate_object_search_report(
             case "url":
                 doc += f"\n![thumbnail_for_{uid}]({GRAPHICS_DB_BASE_URL}/api/v0/objects/{uid}/thumbnail)"
             case "path":
-                object_paths = locate_objects([uid])  # or download_objects([uid])
+                object_paths = locate_objects([uid]) or download_objects([uid])
                 doc += f"\n![thumbnail_for_{uid}]({get_thumbnails(object_paths)[uid]})"
         doc += "\n"
         doc += "\n**Metadata**:"

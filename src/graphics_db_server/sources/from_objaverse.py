@@ -208,9 +208,13 @@ def locate_objects(object_ids: list[str], prioritize_rescaled=True) -> dict[str,
     object_paths = {}
     for id in object_ids:
         metadata = extra_index.get_asset_details(id)
-        if prioritize_rescaled and metadata and metadata["misscaled"] == 1:
+        if not metadata:
+            logger.warning(f"Metadata for {id} not available in extra index.")
+            return None
+        if prioritize_rescaled and metadata["misscaled"] == 1:
             path = metadata["fs_path_rescaled"]
         else:
+        # elif metadata:  # NOTE: not sure if this is the best/cleanest approach...
             path = metadata["fs_path"]
         object_paths[id] = path
 
