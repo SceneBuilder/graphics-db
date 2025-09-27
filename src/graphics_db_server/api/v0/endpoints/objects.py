@@ -139,7 +139,7 @@ def get_object_thumbnails(request: ObjectThumbnailsRequest):
 
 
 @router.get("/objects/{object_uid}/metadata")
-def get_object_metadata(object_uid: str):
+def get_object_metadata(object_uid: str, up_axis: str = "y"):
     """
     Gets metadata for a given 3D object UID, including dimensions.
     """
@@ -161,7 +161,11 @@ def get_object_metadata(object_uid: str):
                 status_code=500, detail="Failed to get object dimensions"
             )
 
-        x_size, y_size, z_size = dimensions
+        match up_axis:
+            case "y":
+                x_size, y_size, z_size = dimensions
+            case "z":
+                x_size, z_size, y_size = dimensions
         metadata = {
             "uid": object_uid,
             "dimensions": safe_round_dict({"x": x_size, "y": y_size, "z": z_size}, 2),
@@ -232,6 +236,8 @@ def generate_object_search_report(
     uids: list[str] = Query(),
     report_format: str = "markdown",
     image_format: str = "url",
+    find_metadata: bool = False,
+    up_axis: str = "y"
 ):
     """
     Returns an LLM/VLM-consumable report with thumbnails and metadata for 3D objects.
@@ -241,6 +247,8 @@ def generate_object_search_report(
     doc = ""
     doc += "\n"
     for uid in uids:
+        with get_db_connection() as conn:
+            asset = crud.get_asset_by_uid(conn, uid)
         doc += f"\n### {uid}"
         doc += "\n"
         doc += "\n**Thumbnails**:"
@@ -258,7 +266,24 @@ def generate_object_search_report(
         doc += "\n"
         doc += "\n**Metadata**:"
         doc += "\n"
-        doc += f"\n{get_object_metadata(uid)}"
+        doc += f"\n{get_object_metadata(uid, up_axis=up_axis)}"
         doc += "\n"
+        doc += "\n**Source**:"
+        doc += "\n"
+        doc += f"\n{asset['source']}"
+        if find_metadata:
+            # doc += "\n"
+            # doc += "\n**Name**:"
+            # doc += "\n"
+            # doc += f"\n{requests.}:"
+            pass
+            # TODO: implement name-finding via Sketchfab API
+            #       (and perhaps on-the-fly saving into extra_index_db)
+            # uid,
+            # url,
+            # tags,
+            # source,
+            # license,
+            # asset_type
 
     return doc
