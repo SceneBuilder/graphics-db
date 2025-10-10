@@ -1,0 +1,48 @@
+[project]
+name = "graphics-db-server"
+version = "0.0.1"
+description = "Search and download graphics assets."
+authors = ["Yunho Cho <opensource@yunhocho.com>"]
+channels = ["conda-forge", "pytorch"]
+platforms = ["linux-64", "osx-64", "osx-arm64"]
+
+[tasks]
+# Development tasks
+dev = "uvicorn graphics_db_server.main:app --reload"
+test = "pytest"
+test-cov = "pytest --cov=src/graphics_db_server --cov-report=html"
+
+# Docker tasks
+docker-build = "docker compose --profile setup up --build"
+docker-setup = "docker compose --profile setup up"
+docker-api = "docker compose --profile api up"
+
+[dependencies]
+numpy = "*"
+python = ">=3.8,<3.13"
+pytorch = "*"
+scipy = "*"
+torchvision = "*"
+
+[pypi-dependencies]
+compress-pickle = "*"
+fastapi = "*"
+loguru = "*"
+objaverse = "*"
+open_clip_torch = "*"
+pgvector = "*"
+psycopg = { version = "*", extras = ["binary", "pool"] }
+pydantic = "*"
+pydantic-settings = "*"
+pyvista = "*"
+requests = "*"
+rich = "*"
+sentence-transformers = "*"
+uvicorn = "*"
+
+[feature.dev.dependencies]
+pytest = "*"
+pytest-cov = "*"
+
+[environments]
+default = { features = ["dev"], solve-group = "default" }
