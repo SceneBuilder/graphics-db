@@ -20,7 +20,7 @@ if __name__ == "__main__":
 
         # Load Poly Haven assets
         logger.info("Loading Poly Haven assets...")
-        polyhaven_assets = load_polyhaven_assets(limit=50, asset_type="textures")
+        polyhaven_assets = load_polyhaven_assets(asset_type="textures")
         logger.info(f"Loaded {len(polyhaven_assets)} Poly Haven assets")
 
         # Insert assets into their respective tables

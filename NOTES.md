@@ -106,8 +106,8 @@ graph TD
     end
 
     subgraph "Business Logic"
-        D --> F[crud.search_assets];
-        E --> G[from_objaverse.download_assets];
+        D --> F[crud.search_objects];
+        E --> G[from_objaverse.download_objects];
         G --> H[from_objaverse.get_thumbnails];
         F --> I[clip.get_clip_embeddings];
     end

@@ -1,22 +1,23 @@
 import requests
 from pathlib import Path
 
-from src.graphics_db_server.logging import logger
+from graphics_db_server.core.config import GRAPHICS_DB_BASE_URL
+from graphics_db_server.logging import logger
 
 
 def test_report_generation(query_text: str):
     """
-    Tests LLM/VLM-consumable asset search report.
+    Tests LLM/VLM-consumable object search report.
     """
-    assets_response = requests.get(
-        "http://localhost:2692/api/v0/assets/search",
+    objects_response = requests.get(
+        f"{GRAPHICS_DB_BASE_URL}/api/v0/objects/search",
         params={"query": query_text},
     )
-    logger.info(f"Query: {query_text}. Response: {assets_response}")
-    assets = assets_response.json()
+    logger.info(f"Query: {query_text}. Response: {objects_response}")
+    objects = objects_response.json()
     response = requests.get(
-        "http://localhost:2692/api/v0/assets/report",
-        params={"asset_uids": [asset["uid"] for asset in assets]},
+        f"{GRAPHICS_DB_BASE_URL}/api/v0/objects/report",
+        params={"uids": [object["uid"] for object in objects]},
     )
     assert response.status_code == 200
     response_json = response.json()

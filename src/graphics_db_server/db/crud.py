@@ -12,16 +12,17 @@ from graphics_db_server.schemas.asset import Asset
 from graphics_db_server.logging import logger
 
 
-def search_assets(
+def search_objects(
     conn,
     query_embedding_clip: np.ndarray,
     query_embedding_sbert: np.ndarray,
     top_k: int,
 ) -> list[dict]:
+    """Search only objaverse_assets table for objects."""
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
             """
-            (SELECT
+            SELECT
                 uid,
                 url,
                 tags,
@@ -31,21 +32,7 @@ def search_assets(
                 (1 - (clip_embedding <=> %(query_vector_clip)s)) + (1 - (sbert_embedding <=> %(query_vector_sbert)s)) as similarity_score
             FROM objaverse_assets
             ORDER BY (clip_embedding <=> %(query_vector_clip)s) + (sbert_embedding <=> %(query_vector_sbert)s)
-            LIMIT %(limit)s)
-            UNION ALL
-            (SELECT
-                uid,
-                url,
-                tags,
-                source,
-                license,
-                asset_type,
-                (1 - (clip_embedding <=> %(query_vector_clip)s)) + (1 - (sbert_embedding <=> %(query_vector_sbert)s)) as similarity_score
-            FROM polyhaven_assets
-            ORDER BY (clip_embedding <=> %(query_vector_clip)s) + (sbert_embedding <=> %(query_vector_sbert)s)
-            LIMIT %(limit)s)
-            ORDER BY similarity_score DESC
-            LIMIT %(limit)s;
+            LIMIT %(limit)s
             """,
             {
                 "query_vector_clip": query_embedding_clip,

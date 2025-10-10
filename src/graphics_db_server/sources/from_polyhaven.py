@@ -64,14 +64,17 @@ def _get_diffuse_url(asset_id: str) -> Optional[str]:
     """
     files_data = _get_asset_files(asset_id)
 
-    # Check if 1k resolution and jpg files exist
-    if "1k" in files_data and "jpg" in files_data["1k"]:
-        jpg_files = files_data["1k"]["jpg"]
+    # Look for diffuse map in the new schema structure
+    if "Diffuse" in files_data and "1k" in files_data["Diffuse"]:
+        diffuse_1k = files_data["Diffuse"]["1k"]
 
-        # Find the diffuse map (usually has "diff" in the filename)
-        for filename, file_info in jpg_files.items():
-            if "diff" in filename.lower():
-                return file_info["url"]
+        # Prefer JPG over other formats for smaller file size
+        if "jpg" in diffuse_1k:
+            return diffuse_1k["jpg"]["url"]
+        elif "png" in diffuse_1k:
+            return diffuse_1k["png"]["url"]
+        elif "exr" in diffuse_1k:
+            return diffuse_1k["exr"]["url"]
 
     print(f"No 1k diffuse map found for asset {asset_id}")
     return None

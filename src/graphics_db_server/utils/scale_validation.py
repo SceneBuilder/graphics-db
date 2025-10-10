@@ -8,65 +8,65 @@ from graphics_db_server.logging import logger
 from graphics_db_server.utils.geometry import get_max_dimension
 
 
-def check_asset_scale(
+def check_object_scale(
     glb_path: str, max_edge_length: float = 100.0
 ) -> tuple[bool, Optional[str]]:
     """
-    Checks that a GLB asset has a reasonable scale by checking if the largest bounding box edge
-    exceeds the specified threshold. This helps identify assets that may be in units other than meters.
+    Checks that a GLB object has a reasonable scale by checking if the largest bounding box edge
+    exceeds the specified threshold. This helps identify objects that may be in units other than meters.
 
     Args:
         glb_path: Path to the GLB file to validate
         max_edge_length: Maximum allowed edge length in meters (default: 100.0)
 
     Returns:
-        tuple: (is_valid, reason) where is_valid is True if the asset passes validation,
+        tuple: (is_valid, reason) where is_valid is True if the object passes validation,
                and reason is a string explaining why validation failed (if applicable)
     """
     success, max_edge, error = get_max_dimension(glb_path)
 
     if not success:
-        return False, f"Error validating asset: {error}"
+        return False, f"Error validating object: {error}"
 
     if max_edge > max_edge_length:
         return (
             False,
-            f"Asset too large: max edge is {max_edge:.2f}m (limit: {max_edge_length}m)",
+            f"Object too large: max edge is {max_edge:.2f}m (limit: {max_edge_length}m)",
         )
 
     return True, None
 
 
-def validate_asset_scales(
-    asset_paths: dict[str, str], max_edge_length: float = 100.0
+def validate_object_scales(
+    object_paths: dict[str, str], max_edge_length: float = 100.0
 ) -> dict[str, bool]:
     """
-    Validates the scale of downloaded GLB assets to reject those that are too large
+    Validates the scale of downloaded GLB objects to reject those that are too large
     (likely in centimeters instead of meters).
 
     Args:
-        asset_paths: A dictionary mapping asset UIDs to their .glb file paths.
+        object_paths: A dictionary mapping object UIDs to their .glb file paths.
         max_edge_length: Maximum allowed edge length in meters (default: 100.0)
 
     Returns:
-        A dictionary mapping asset UIDs to validation results (True if valid, False if rejected).
+        A dictionary mapping object UIDs to validation results (True if valid, False if rejected).
     """
     validation_results = {}
-    for uid, glb_path_str in asset_paths.items():
+    for uid, glb_path_str in object_paths.items():
         glb_path = Path(glb_path_str).resolve()
 
         if not glb_path.exists():
             validation_results[uid] = False
-            logger.warning(f"GLB file not found for asset {uid}: {glb_path}")
+            logger.warning(f"GLB file not found for object {uid}: {glb_path}")
             continue
 
-        is_valid, reason = check_asset_scale(str(glb_path), max_edge_length)
+        is_valid, reason = check_object_scale(str(glb_path), max_edge_length)
         validation_results[uid] = is_valid
 
         if not is_valid:
-            logger.info(f"Rejecting asset {uid}: {reason}")
+            logger.info(f"Rejecting object {uid}: {reason}")
         else:
-            logger.info(f"Asset {uid} passed scale validation")
+            logger.info(f"Object {uid} passed scale validation")
 
     return validation_results
 

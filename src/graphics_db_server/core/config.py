@@ -50,6 +50,9 @@ THUMBNAIL_RESOLUTION = 1024
 # Logfire
 LOGFIRE_SERVICE_NAME = "graphics-db"
 
+# Server
+GRAPHICS_DB_BASE_URL = "http://localhost:2692"
+
 load_dotenv()
 
 
