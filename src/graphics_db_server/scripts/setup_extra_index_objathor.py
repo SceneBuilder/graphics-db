@@ -32,7 +32,9 @@ from graphics_db_server.utils.scale_validation import scale_glb_model
 objathor_annotation = None
 
 
-def load_objathor_annotation(filepath: str | Path) -> Dict[str, Any]:
+def load_objathor_annotation(
+    filepath: str | Path = OBJATHOR_ANNO_JSON_PATH,
+) -> Dict[str, Any]:
     """
     Load ObjaTHOR metadata from JSON file.
 
@@ -53,7 +55,7 @@ def load_objathor_annotation(filepath: str | Path) -> Dict[str, Any]:
         logger.info(f"Loaded ObjaTHOR metadata for {len(objathor_annotation)} assets")
 
 
-load_objathor_annotation(OBJATHOR_ANNO_JSON_PATH)  # TEMP?
+# load_objathor_annotation(OBJATHOR_ANNO_JSON_PATH)  # TEMP?
 
 
 def extract_scale_analysis_from_objathor(

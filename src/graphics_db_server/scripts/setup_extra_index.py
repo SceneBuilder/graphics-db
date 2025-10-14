@@ -60,6 +60,7 @@ from graphics_db_server.utils.scale_validation import scale_glb_model
 from graphics_db_server.utils.thumbnail import generate_thumbnail_from_glb
 from graphics_db_server.scripts.setup_extra_index_objathor import (
     calc_metadata_objathor,
+    load_objathor_annotation,
     objathor_annotation_available,
 )
 from graphics_db_server.scripts.setup_extra_index_origin import (
@@ -489,6 +490,7 @@ def compute_metadata(
         max_concurrent (int): Maximum number of concurrent LLM API calls.
         strategy (str): Annotation strategy - 'vlm_only', 'prefer_external', or 'external_only'.
     """
+    load_objathor_annotation()
     asyncio.run(_compute_metadata_async(version, max_concurrent, strategy))
 
 
