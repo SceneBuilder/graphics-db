@@ -26,7 +26,9 @@ import sys
 from pathlib import Path
 from typing import Literal
 
+import dask
 # import tqdm
+from dask.distributed import Client, LocalCluster
 import logfire
 from openai import AsyncOpenAI
 from pydantic import BaseModel
@@ -60,9 +62,12 @@ from graphics_db_server.scripts.setup_extra_index_objathor import (
     calc_metadata_objathor,
     objathor_annotation_available,
 )
+from graphics_db_server.scripts.setup_extra_index_origin import (
+    classify_origin_type_with_uuid,
+)
 
 # Configuration
-THUMBNAIL_DIR = Path("/media/ycho358/YunhoStrgExt/graphics_db_thumbnails")
+THUMBNAIL_DIR = Path("/mnt/4TBStorageA/ycho358/graphics_db_thumbnails")
 METADATA_VERSION = 1  # NOTE: increment with logic changes
 BATCH_SIZE = 100  # for periodic DB commits
 MAX_CONCURRENT = 100  # for VLM calls
@@ -107,6 +112,7 @@ def setup_database():
         "fs_path": "TEXT",
         "fs_path_rescaled": "TEXT",
         "rescaled_by": "TEXT",
+        "origin_type": "TEXT",  # off-center, median, ground, contained
     }
 
     cursor.execute("PRAGMA table_info(assets)")
@@ -151,7 +157,9 @@ def setup_index(data_dir: Path):
 
     with tqdm(total=len(asset_files), desc="Indexing assets") as pbar:
         while True:
-            batch = [item for _, item in zip(range(BATCH_SIZE*10), asset_data_generator)]
+            batch = [
+                item for _, item in zip(range(BATCH_SIZE * 10), asset_data_generator)
+            ]
             if not batch:
                 break
             cursor.executemany(
@@ -442,13 +450,13 @@ def reset_metadata():
     """
     Clear all metadata.
     """
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(EXTRA_INDEX_DB_FILE)
     cursor = conn.cursor()
 
-    print("Resetting all existing metadata")
+    logger.info("Resetting all existing metadata")
     cursor.execute("""
         UPDATE assets SET
-            misscaled = NULL, 
+            misscaled = NULL,
             misscaling_type = NULL,
             dims_x = NULL,
             dims_y = NULL,
@@ -457,15 +465,16 @@ def reset_metadata():
             dims_yr = NULL,
             dims_zr = NULL,
             scaling_factor = NULL,
-            correction_factor = NULL,
             metadata_version = NULL,
             last_updated = NULL,
             thumbnail_paths = NULL,
             fs_path = NULL,
             fs_path_rescaled = NULL,
-            rescaled_by = NULL
+            rescaled_by = NULL,
+            origin_type = NULL
     """)
     conn.commit()
+    conn.close()
     logger.info("Metadata has been reset.")
 
 
@@ -530,7 +539,7 @@ async def _compute_metadata_async(
                 if strategy in ["vlm_only", "prefer_external"]:
                     thumbnail_paths = generate_thumbnails(uuid, path_str, THUMBNAIL_DIR)
                     thumbnail_paths = [str(path) for path in thumbnail_paths]  # TEMP
-                
+
                 metadata = await calc_metadata_async(
                     file_path,
                     thumbnail_paths=thumbnail_paths,
@@ -608,8 +617,105 @@ async def _compute_metadata_async(
     )
 
 
+def compute_origin_types_dask(version: int):
+    """
+    Compute origin types for all assets using Dask for parallel processing.
+
+    This is optimized for large-scale processing (millions of assets) using
+    distributed computing with Dask.
+
+    Args:
+        version: Metadata version number (same as used for scale analysis).
+                 Assets with origin_type=NULL or metadata_version < version will be processed.
+    """
+    logger.info("Starting origin type analysis with Dask...")
+
+    # Set up Dask cluster
+    cluster = LocalCluster(
+        threads_per_worker=1,  # for CPU-bound tasks
+    )
+    client = Client(cluster)
+    logger.info(f"Dask dashboard available at: {client.dashboard_link}")
+
+    # Query assets that need origin analysis
+    conn = sqlite3.connect(EXTRA_INDEX_DB_FILE)
+    cursor = conn.cursor()
+
+    query = """
+        SELECT uuid, file_path FROM assets
+        WHERE origin_type IS NULL OR metadata_version IS NULL OR metadata_version < ?
+    """
+    target_assets = cursor.execute(query, (version,)).fetchall()
+    conn.close()
+
+    if not target_assets:
+        logger.info(f"All assets already have origin analysis v{version}")
+        client.close()
+        cluster.close()
+        return
+
+    logger.info(f"Found {len(target_assets)} assets requiring origin analysis")
+
+    # Create delayed tasks for Dask
+    # Using delayed() makes tasks lazy - they don't execute until compute() is called
+    lazy_results = [
+        dask.delayed(classify_origin_type_with_uuid)(uuid, file_path)
+        for uuid, file_path in target_assets
+    ]
+
+    # Execute in parallel with progress tracking
+    logger.info("Computing origin types in parallel...")
+    results = dask.compute(*lazy_results)
+
+    # Batch update database
+    logger.info("Updating database with results...")
+    conn = sqlite3.connect(EXTRA_INDEX_DB_FILE)
+    cursor = conn.cursor()
+
+    successful = 0
+    errors = 0
+
+    # Batch updates for performance
+    update_data = []
+    timestamp = datetime.datetime.now().isoformat()
+
+    for uuid, origin_type in results:
+        if origin_type == "error":
+            errors += 1
+            continue
+
+        # Update origin_type, metadata_version, and last_updated timestamp
+        update_data.append((origin_type, version, timestamp, uuid))
+        successful += 1
+
+        # Commit in batches
+        if len(update_data) >= BATCH_SIZE:
+            cursor.executemany(
+                "UPDATE assets SET origin_type = ?, metadata_version = ?, last_updated = ? WHERE uuid = ?",
+                update_data,
+            )
+            conn.commit()
+            update_data = []
+
+    # Final batch
+    if update_data:
+        cursor.executemany(
+            "UPDATE assets SET origin_type = ?, metadata_version = ?, last_updated = ? WHERE uuid = ?",
+            update_data,
+        )
+        conn.commit()
+
+    conn.close()
+    client.close()
+    cluster.close()
+
+    logger.info(f"Origin analysis complete. Success: {successful}, Errors: {errors}")
+
+
 def main():
-    parser = argparse.ArgumentParser(description="")
+    parser = argparse.ArgumentParser(
+        description="Setup extra index database with metadata for 3D assets"
+    )
     # NOTE: data_dir is sourced from core/config.py
     parser.add_argument("--reset", action="store_true", help="Clear all existing data.")
     parser.add_argument(
@@ -619,14 +725,25 @@ def main():
         default="external_only",
         help="Annotation strategy: vlm_only (VLM analysis only), prefer_external (try external first, fallback to VLM), external_only (external annotations only)",
     )
+    parser.add_argument(
+        "--compute-origins",
+        action="store_true",
+        help="Compute origin types for all assets using Dask (CPU-intensive, parallelized)",
+    )
     args = parser.parse_args()
 
     setup_database()
     if args.reset:
         reset_metadata()
-    for source_name, local_dir in LOCAL_FS_PATHS.items():
-        setup_index(Path(local_dir).expanduser())
-        compute_metadata(METADATA_VERSION, strategy=args.strategy)
+
+    # TEMPDEAC
+    # for _source_name, local_dir in LOCAL_FS_PATHS.items():
+    #     setup_index(Path(local_dir).expanduser())
+    #     compute_metadata(METADATA_VERSION, strategy=args.strategy)
+
+    # Run origin analysis if requested
+    if args.compute_origins:
+        compute_origin_types_dask(METADATA_VERSION)
 
 
 if __name__ == "__main__":
