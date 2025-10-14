@@ -24,6 +24,7 @@ pytorch = "*"
 scipy = "*"
 torchvision = "*"
 bokeh = ">=3.8.0,<4"
+rtree = ">=1.4.1,<2"
 
 [pypi-dependencies]
 dask = "*"

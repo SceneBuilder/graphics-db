@@ -27,9 +27,8 @@ from pathlib import Path
 from typing import Literal
 
 import dask
-# import tqdm
-from dask.distributed import Client, LocalCluster
 import logfire
+from dask.distributed import Client, LocalCluster, as_completed
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 from pydantic_ai import Agent
@@ -658,48 +657,54 @@ def compute_origin_types_dask(version: int):
 
     logger.info(f"Found {len(target_assets)} assets requiring origin analysis")
 
-    # Create delayed tasks for Dask
-    # Using delayed() makes tasks lazy - they don't execute until compute() is called
-    lazy_results = [
-        dask.delayed(classify_origin_type_with_uuid)(uuid, file_path)
-        for uuid, file_path in target_assets
-    ]
+    # Submit tasks using client.map for memory efficiency
+    logger.info("Submitting origin type analysis tasks to Dask...")
+    futures = client.map(
+        classify_origin_type_with_uuid,
+        [uuid for uuid, _ in target_assets],
+        [fp for _, fp in target_assets],
+    )
 
-    # Execute in parallel with progress tracking
-    logger.info("Computing origin types in parallel...")
-    results = dask.compute(*lazy_results)
-
-    # Batch update database
-    logger.info("Updating database with results...")
+    # Process results as they complete to avoid holding them all in memory
+    logger.info("Processing results...")
     conn = sqlite3.connect(EXTRA_INDEX_DB_FILE)
     cursor = conn.cursor()
 
     successful = 0
     errors = 0
-
-    # Batch updates for performance
     update_data = []
     timestamp = datetime.datetime.now().isoformat()
 
-    for uuid, origin_type in results:
-        if origin_type == "error":
-            errors += 1
-            continue
+    with tqdm(
+        as_completed(futures, with_results=True),
+        total=len(target_assets),
+        desc="Analyzing origins",
+    ) as pbar:
+        for future, result in pbar:
+            if isinstance(result, Exception):
+                logger.error(f"Task failed with exception: {result}")
+                errors += 1
+                continue
 
-        # Update origin_type, metadata_version, and last_updated timestamp
-        update_data.append((origin_type, version, timestamp, uuid))
-        successful += 1
+            uuid, origin_type = result
+            if origin_type == "error":
+                errors += 1
+                continue
 
-        # Commit in batches
-        if len(update_data) >= BATCH_SIZE:
-            cursor.executemany(
-                "UPDATE assets SET origin_type = ?, metadata_version = ?, last_updated = ? WHERE uuid = ?",
-                update_data,
-            )
-            conn.commit()
-            update_data = []
+            # Append data for batch update
+            update_data.append((origin_type, version, timestamp, uuid))
+            successful += 1
 
-    # Final batch
+            # Commit to database in batches
+            if len(update_data) >= BATCH_SIZE:
+                cursor.executemany(
+                    "UPDATE assets SET origin_type = ?, metadata_version = ?, last_updated = ? WHERE uuid = ?",
+                    update_data,
+                )
+                conn.commit()
+                update_data = []
+
+    # Commit any remaining final batch
     if update_data:
         cursor.executemany(
             "UPDATE assets SET origin_type = ?, metadata_version = ?, last_updated = ? WHERE uuid = ?",
