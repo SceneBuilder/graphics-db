@@ -739,6 +739,120 @@ def compute_origin_types_dask(version: int):
     logger.info(f"Origin analysis complete. Success: {successful}, Errors: {errors}")
 
 
+def rescale_asset_worker(uuid: str, file_path_str: str, scaling_factor: float) -> tuple[str, str, float]:
+    """
+    A simple, synchronous worker function that rescales a single asset.
+    This function will be distributed by Dask.
+    Returns: (uuid, path_to_scaled_file, actual_scaling_factor)
+    """
+    try:
+        file_path = Path(file_path_str)
+        scaled_model_path = file_path.with_stem(f"{uuid}_scaled")
+        success = scale_glb_model(file_path, scaled_model_path, scaling_factor, backend="blender")
+        
+        if success:
+            return uuid, str(scaled_model_path), scaling_factor
+        else:
+            logger.warning(f"Scaling failed for {uuid}")
+            return uuid, "failure", -1.0
+    except Exception as e:
+        logger.error(f"Exception during scaling of {uuid}: {e}")
+        return uuid, "failure", -1.0
+
+
+def perform_rescaling_dask(version: int):
+    """
+    Computes rescaling for assets using offline ObjaTHOR annotations and Dask for parallel processing.
+    """
+    logger.info("Starting offline asset rescaling with Dask...")
+
+    # Load the offline annotations first
+    objathor_annotations = load_objathor_annotation()
+    if not objathor_annotations:
+        logger.warning("ObjaTHOR annotations not found. Skipping rescaling.")
+        return
+
+    # Query assets that have not been rescaled yet
+    conn = sqlite3.connect(EXTRA_INDEX_DB_FILE)
+    cursor = conn.cursor()
+    query = "SELECT uuid, file_path FROM assets WHERE fs_path_rescaled IS NULL"
+    params = ()
+    if LIMIT:
+        query += " LIMIT ?"
+        params += (LIMIT,)
+    target_assets = cursor.execute(query, params).fetchall()
+    conn.close()
+
+    # Identify rescaling jobs from offline data
+    jobs = []
+    for uuid, file_path in target_assets:
+        if uuid in objathor_annotations:
+            # Logic to get scaling_factor from annotation, similar to calc_metadata_objathor
+            # For demonstration, let's assume the annotation dict has a 'scaling_factor' key
+            sf = objathor_annotations[uuid].get("scaling_factor")
+            if sf and not math.isclose(sf, 1.0, abs_tol=0.01):
+                jobs.append({'uuid': uuid, 'file_path': file_path, 'scaling_factor': sf})
+
+    if not jobs:
+        logger.info("No assets found requiring offline rescaling.")
+        return
+    
+    logger.info(f"Found {len(jobs)} assets for offline rescaling.")
+
+    # Set up Dask and run the jobs
+    cluster = LocalCluster(threads_per_worker=1)
+    client = Client(cluster)
+    logger.info(f"Dask dashboard available at: {client.dashboard_link}")
+
+    futures = client.map(
+        rescale_asset_worker,
+        [j['uuid'] for j in jobs],
+        [j['file_path'] for j in jobs],
+        [j['scaling_factor'] for j in jobs],
+    )
+
+    # Process results and prepare for DB update
+    update_data = []
+    timestamp = datetime.datetime.now().isoformat()
+    successful, errors = 0, 0
+
+    with tqdm(as_completed(futures, with_results=True), total=len(jobs), desc="Rescaling assets") as pbar:
+        for future, result in pbar:
+            if isinstance(result, Exception):
+                errors += 1
+                continue
+            
+            uuid, scaled_path, sf = result
+            if scaled_path == "failure":
+                errors += 1
+                continue
+
+            # Append data for batch update
+            update_data.append((scaled_path, sf, "objaverse-thor", version, timestamp, uuid))
+            successful += 1
+
+    # Commit all updates to the database
+    if update_data:
+        conn = sqlite3.connect(EXTRA_INDEX_DB_FILE)
+        cursor = conn.cursor()
+        cursor.executemany(
+            """UPDATE assets SET 
+               fs_path_rescaled = ?, 
+               scaling_factor = ?, 
+               rescaled_by = ?, 
+               metadata_version = ?, 
+               last_updated = ? 
+               WHERE uuid = ?""",
+            update_data,
+        )
+        conn.commit()
+        conn.close()
+
+    client.close()
+    cluster.close()
+    logger.info(f"Offline rescaling complete. Success: {successful}, Errors: {errors}")
+
+
 def main():
     global LIMIT
     global OBJATHOR_ONLY
@@ -758,6 +872,11 @@ def main():
         "--compute-origins",
         action="store_true",
         help="Compute origin types for all assets using Dask (CPU-intensive, parallelized)",
+    )
+    parser.add_argument(
+        "--perform-rescaling",
+        action="store_true",
+        help="Perform rescaling for assets using offline data and Dask (CPU-intensive, parallelized)",
     )
     parser.add_argument(
         "--limit",
@@ -784,6 +903,10 @@ def main():
     # Run origin analysis if requested
     if args.compute_origins:
         compute_origin_types_dask(METADATA_VERSION)
+
+    # Run rescaling if requested
+    if args.perform_rescaling:
+        perform_rescaling_dask(METADATA_VERSION)
 
     for _source_name, local_dir in LOCAL_FS_PATHS.items():
         setup_index(Path(local_dir).expanduser())
