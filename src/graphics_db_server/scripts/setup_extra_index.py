@@ -21,6 +21,7 @@ import asyncio
 import datetime
 import json
 import math
+import os
 import sqlite3
 import sys
 from pathlib import Path
@@ -78,8 +79,13 @@ ROUND_DIGITS = 3
 DEBUG = True
 # DEBUG = False
 
-logfire.configure(service_name=LOGFIRE_SERVICE_NAME)
-logfire.instrument_pydantic_ai()
+def is_running_in_dask_worker() -> bool:
+    """Checks for the DASK_WORKER_ID environment variable."""
+    return 'DASK_WORKER_ID' in os.environ
+
+if not is_running_in_dask_worker():
+    logfire.configure(service_name=LOGFIRE_SERVICE_NAME)
+    logfire.instrument_pydantic_ai()
 
 
 def setup_database():
@@ -728,6 +734,7 @@ def compute_origin_types_dask(version: int):
             successful += 1
 
             # Commit to database in batches
+            
             if len(update_data) >= BATCH_SIZE:
                 cursor.executemany(
                     "UPDATE assets SET origin_type = ?, metadata_version = ?, last_updated = ? WHERE uuid = ?",
@@ -773,12 +780,12 @@ def rescale_asset_worker(uuid: str, file_path_str: str, scaling_factor: float) -
 
 
 def recenter_asset_worker(
-    uuid: str, file_path_str: str, strategy: str, on_floor: bool
+    uuid: str, file_path_str: str, origin_type: str, on_floor: bool
 ) -> tuple[str, str, str]:
     """
     A simple, synchronous worker function that recenters a single asset.
     This function will be distributed by Dask.
-    Returns: (uuid, path_to_recentered_file, strategy_used)
+    Returns: (uuid, path_to_recentered_file, origin_type)
     """
     try:
         file_path = Path(file_path_str)
@@ -786,19 +793,18 @@ def recenter_asset_worker(
         success = recenter_glb_model(
             file_path,
             recentered_model_path,
-            strategy,
-            on_floor=on_floor,
+            origin_type,
             backend="blender",
         )
 
         if success:
-            return uuid, str(recentered_model_path), strategy
+            return uuid, str(recentered_model_path), origin_type
         else:
             logger.warning(f"Recentering failed for {uuid}")
-            return uuid, "failure", strategy
+            return uuid, "failure", origin_type
     except Exception as e:
         logger.error(f"Exception during recentering of {uuid}: {e}")
-        return uuid, "failure", strategy
+        return uuid, "failure", origin_type
 
 
 def perform_rescaling_dask(version: int):
@@ -1052,12 +1058,12 @@ def main():
         help="Compute origin types for all assets using Dask (CPU-intensive, parallelized)",
     )
     parser.add_argument(
-        "--perform-rescaling",
+        "--rescale",
         action="store_true",
         help="Perform rescaling for assets using offline data and Dask (CPU-intensive, parallelized)",
     )
     parser.add_argument(
-        "--perform-recentering",
+        "--recenter",
         action="store_true",
         help="Perform recentering for off-center assets using Dask (CPU-intensive, parallelized)",
     )
@@ -1080,22 +1086,22 @@ def main():
         load_objathor_annotation()
 
     setup_database()
+    # TEMPDEAC
+    # for _source_name, local_dir in LOCAL_FS_PATHS.items():
+    #     setup_index(Path(local_dir).expanduser())
+    #     compute_metadata(METADATA_VERSION, strategy=args.strategy)
+
     if args.reset:
         reset_metadata()
 
-    if args.perform_rescaling:
+    if args.rescale:
         perform_rescaling_dask(METADATA_VERSION)
 
     if args.compute_origins:
         compute_origin_types_dask(METADATA_VERSION)
 
-    if args.perform_recentering:
+    if args.recenter:
         perform_recentering_dask(METADATA_VERSION)
-
-    for _source_name, local_dir in LOCAL_FS_PATHS.items():
-        setup_index(Path(local_dir).expanduser())
-        compute_metadata(METADATA_VERSION, strategy=args.strategy)
-
 
 if __name__ == "__main__":
     main()

@@ -59,6 +59,9 @@ LOGFIRE_SERVICE_NAME = "graphics-db"
 # Server
 GRAPHICS_DB_BASE_URL = "http://localhost:2692"
 
+# Logs
+BLENDER_LOG_FILE = "blender.log"
+
 load_dotenv()
 
 

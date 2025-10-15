@@ -18,8 +18,8 @@ docker-setup = "docker compose --profile setup up"
 docker-api = "docker compose --profile api up"
 
 [dependencies]
-numpy = "*"
-python = ">=3.8,<3.13"
+numpy = "<2"
+python = ">=3.11, <3.12"
 pytorch = "*"
 scipy = "*"
 torchvision = "*"
@@ -29,6 +29,7 @@ matplotlib-venn = ">=1.1.2,<2"
 gitpython = ">=3.1.45,<4"
 
 [pypi-dependencies]
+bpy = ">=4.4.0, <5"
 dask = "*"
 distributed = "*"
 compress-pickle = "*"

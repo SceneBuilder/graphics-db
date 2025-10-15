@@ -47,7 +47,7 @@ def load_objathor_annotation(
     global objathor_annotation
     if objathor_annotation is not None:
         logger.warning("ObjaTHOR metadata is already loaded! Skipping re-load.")
-        return
+        return objathor_annotation
     else:
         logger.info(f"Loading ObjaTHOR metadata from {filepath}")
         with open(Path(filepath).expanduser(), "r") as f:

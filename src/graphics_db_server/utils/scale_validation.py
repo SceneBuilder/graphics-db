@@ -5,6 +5,7 @@ from typing import Literal, Optional
 import pyvista as pv
 
 from graphics_db_server.logging import logger
+from graphics_db_server.utils.blender import cleanup_blender_memory
 from graphics_db_server.utils.geometry import get_max_dimension
 
 
@@ -176,26 +177,6 @@ def scale_glb_model_pyvista(
     except Exception as e:
         logger.error(f"Failed to export the model file: {e}")
         return False
-
-
-def cleanup_blender_memory():  # NOTE: doesn't seem to work
-    """Periodically clear Blender memory for batch operations."""
-    try:
-        import bpy
-        import gc
-        
-        # Clear scene
-        bpy.ops.object.select_all(action='SELECT')
-        bpy.ops.object.delete()
-        
-        # Purge all orphaned data
-        bpy.ops.outliner.orphans_purge(do_local_ids=True, do_linked_ids=True, do_recursive=True)
-        
-        # Force Python garbage collection
-        gc.collect()
-        
-    except ImportError:
-        pass
 
 
 def scale_glb_model_blender(

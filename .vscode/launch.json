@@ -13,13 +13,25 @@
             "justMyCode": false
         },
         {
-            "name": "debugpy (notJustMyCode, args)",
+            "name": "debugpy (notJustMyCode, 1 arg)",
             "type": "debugpy",
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
             "args": [
-                "${input:args}"
+                "${input:arg1}"
+            ],
+            "justMyCode": false
+        },
+        {
+            "name": "debugpy (notJustMyCode, 2 args)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": [
+                "${input:arg1}",
+                "${input:arg2}"
             ],
             "justMyCode": false
         },
@@ -30,18 +42,39 @@
             "program": "${file}",
             "console": "integratedTerminal",
             "args": [
-                "${input:args}",
+                "${input:arg1}",
                 "--limit",
-                "1000"
+                "1000",
+                "--objathor-only"
+            ],
+            "justMyCode": false
+        },
+        {
+            "name": "Setup Extra Index (Test; limit 1000) (2 args)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": [
+                "${input:arg1}",
+                "${input:arg2}",
+                "--limit",
+                "1000",
+                "--objathor-only"
             ],
             "justMyCode": false
         }
     ],
     "inputs": [
         {
-            "id": "args",
+            "id": "arg1",
             "type": "promptString",
             "description": "An argument."
-        }
+        },
+        {
+            "id": "arg2",
+            "type": "promptString",
+            "description": "An argument."
+        },
     ]
 }
