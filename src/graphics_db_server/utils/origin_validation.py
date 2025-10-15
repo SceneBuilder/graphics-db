@@ -1,17 +1,21 @@
 """
-Origin type classification module for 3D assets.
+Origin validation and correction module for 3D assets.
 
-This module provides functionality to classify the origin point placement
-of 3D mesh assets into categories: off-center, median, ground, contained.
+This module provides functionality to:
+1. Classify the origin point placement of 3D mesh assets into categories:
+   off-center, median, ground, contained, invalid, error.
+2. Recentering GLB files by translating the origin to desired positions
+   (ground or median) using the asset's AABB.
 
-Designed to work with the Dask-based parallel processing pipeline for large-scale
-asset datasets (millions of assets).
+Designed for integration with the graphics-db pipeline, supporting Dask-based
+parallel processing for large-scale datasets and Blender-based modifications.
 """
 
 from pathlib import Path
 from typing import Literal
 
 import numpy as np
+import subprocess
 import trimesh
 
 from graphics_db_server.logging import logger
@@ -130,18 +134,130 @@ def classify_origin_type_with_uuid(uuid: str, file_path: str) -> tuple[str, Orig
     return uuid, origin_type
 
 
-# NOTE: integration testing
-if __name__ == "__main__":
-    import sys
+def recenter_glb_model(
+    input_path: Path,
+    output_path: Path,
+    origin_type: Literal["ground", "median"],
+    backend: str = "blender",
+) -> bool:
+    """
+    Recenters a GLB file by translating all meshes so the origin aligns with
+    the desired origin_type based on the asset's AABB.
 
-    if len(sys.argv) < 2:
-        print("Usage: python setup_extra_index_origin.py <path_to_glb_file>")
-        sys.exit(1)
+    Args:
+        input_path: Path to the input GLB file.
+        output_path: Path to save the recentered GLB file.
+        origin_type: "ground" (center XZ, Y at min/bottom) or "median" (full centroid).
+        backend: Currently only "blender" is supported.
 
-    test_path = Path(sys.argv[1])
-    if not test_path.exists():
-        print(f"Error: File not found at {test_path}")
-        sys.exit(1)
+    Returns:
+        bool: True if successful, False otherwise.
 
-    result = classify_origin_type(test_path)
-    print(f"Origin type for {test_path.name}: {result}")
+    Note:
+        - Uses Blender Python API via subprocess for isolation.
+        - Assumes Blender is installed and accessible in PATH.
+        - Clears scene and imports/exports in an isolated manner.
+    """
+    if backend != "blender":
+        logger.error(f"Unsupported backend: {backend}")
+        return False
+
+    # Blender script to execute
+    blender_script = f"""
+import bpy
+import bmesh
+from mathutils import Vector
+
+# Clear existing scene
+bpy.ops.wm.read_factory_settings(use_empty=True)
+
+# Import the GLB
+bpy.ops.import_scene.gltf(filepath=r"{input_path}")
+
+# Select all mesh objects (ignore empties, cameras, etc.)
+meshes = [obj for obj in bpy.context.scene.objects if obj.type == 'MESH']
+if not meshes:
+    print("No mesh objects found")
+    sys.exit(1)
+
+bpy.ops.object.select_all(action='DESELECT')
+for mesh in meshes:
+    mesh.select_set(True)
+bpy.context.view_layer.objects.active = meshes[0] if meshes else None
+
+# Update scene
+bpy.context.view_layer.update()
+
+# Compute AABB in world space
+min_coords = Vector((float('inf'), float('inf'), float('inf')))
+max_coords = Vector((float('-inf'), float('-inf'), float('-inf')))
+
+for obj in meshes:
+    obj_matrix = obj.matrix_world
+    for corner in obj.bound_box:
+        world_corner = obj_matrix @ Vector(corner)
+        min_coords.x = min(min_coords.x, world_corner.x)
+        min_coords.y = min(min_coords.y, world_corner.y)
+        min_coords.z = min(min_coords.z, world_corner.z)
+        max_coords.x = max(max_coords.x, world_corner.x)
+        max_coords.y = max(max_coords.y, world_corner.y)
+        max_coords.z = max(max_coords.z, world_corner.z)
+
+center_x = (min_coords.x + max_coords.x) / 2
+center_y = (min_coords.y + max_coords.y) / 2
+center_z = (min_coords.z + max_coords.z) / 2
+
+# Determine translation
+if origin_type == "median":
+    trans_x, trans_y, trans_z = -center_x, -center_y, -center_z
+elif origin_type == "ground":
+    if on_floor:
+        trans_y = -min_coords.y  # Ground to Y=0
+    else:
+        trans_y = -center_y
+    trans_x, trans_z = -center_x, -center_z
+else:
+    print(f"Invalid origin_type: {origin_type}")
+    sys.exit(1)
+
+# Apply translation to all selected objects
+bpy.ops.transform.translate(value=(trans_x, trans_y, trans_z))
+
+# Export as GLB
+bpy.ops.export_scene.gltf(
+    filepath=r"{output_path}",
+    export_format='GLB',
+    export_apply=True,
+    export_selected=True
+)
+
+print("Recentering successful")
+"""
+
+    try:
+        # Run Blender in background with the script
+        cmd = [
+            "blender",
+            "--background",
+            "--python-expr",
+            blender_script,
+        ]
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=input_path.parent,
+        )
+        if result.returncode == 0:
+            logger.debug(f"Recentered {input_path} to {output_path} using {origin_type}")
+            return True
+        else:
+            logger.error(f"Blender error recentering {input_path}: {result.stderr}")
+            return False
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Blender subprocess failed for {input_path}: {e}")
+        return False
+    except FileNotFoundError:
+        logger.error("Blender not found in PATH")
+        return False

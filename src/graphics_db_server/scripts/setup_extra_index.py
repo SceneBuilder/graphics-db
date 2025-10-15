@@ -53,6 +53,10 @@ from graphics_db_server.utils.geometry import (
     calc_optimal_scaling_factor,
     get_glb_dimensions,
 )
+from graphics_db_server.utils.origin_validation import (
+    classify_origin_type_with_uuid,
+    recenter_glb_model,
+)
 from graphics_db_server.utils.pai import transform_paths_to_binary
 from graphics_db_server.utils.rounding import safe_round
 from graphics_db_server.utils.scale_validation import scale_glb_model
@@ -62,9 +66,6 @@ from graphics_db_server.scripts.setup_extra_index_objathor import (
     extract_scale_analysis_from_objathor,
     load_objathor_annotation,
     objathor_annotation_available,
-)
-from graphics_db_server.scripts.setup_extra_index_origin import (
-    classify_origin_type_with_uuid,
 )
 
 # Configuration
@@ -114,6 +115,9 @@ def setup_database():
         "fs_path_rescaled": "TEXT",
         "rescaled_by": "TEXT",
         "origin_type": "TEXT",  # off-center, median, ground, contained
+        "fs_path_recentered": "TEXT",
+        "recentered_by": "TEXT",
+        "recentering_strategy": "TEXT",
     }
 
     cursor.execute("PRAGMA table_info(assets)")
@@ -472,7 +476,10 @@ def reset_metadata():
             fs_path = NULL,
             fs_path_rescaled = NULL,
             rescaled_by = NULL,
-            origin_type = NULL
+            origin_type = NULL,
+            fs_path_recentered = NULL,
+            recentered_by = NULL,
+            recentering_strategy = NULL
     """)
     conn.commit()
     conn.close()
@@ -667,8 +674,12 @@ def compute_origin_types_dask(version: int):
     conn.close()
 
     if OBJATHOR_ONLY:
-        target_assets = [(uuid, path_str) for uuid, path_str in target_assets if objathor_annotation_available(uuid)]
-        logger.info(f"Filtered to {len(target_assets)} ObjaTHOR assets for origin analysis.")
+        target_assets = [
+            (uuid, path_str)
+            for uuid, path_str in target_assets
+            if objathor_annotation_available(uuid)
+        ]
+        logger.info(f"Filtered to {len(target_assets)} ObjaTHOR assets for origin analysis.")  # fmt:skip
 
     if not target_assets:
         logger.info(f"All assets already have origin analysis v{version}")
@@ -740,7 +751,7 @@ def compute_origin_types_dask(version: int):
     logger.info(f"Origin analysis complete. Success: {successful}, Errors: {errors}")
 
 
-def rescale_asset_worker(uuid: str, file_path_str: str, scaling_factor: float) -> tuple[str, str, float]:
+def rescale_asset_worker(uuid: str, file_path_str: str, scaling_factor: float) -> tuple[str, str, float]:  # fmt:skip
     """
     A simple, synchronous worker function that rescales a single asset.
     This function will be distributed by Dask.
@@ -749,8 +760,8 @@ def rescale_asset_worker(uuid: str, file_path_str: str, scaling_factor: float) -
     try:
         file_path = Path(file_path_str)
         scaled_model_path = file_path.with_stem(f"{uuid}_scaled")
-        success = scale_glb_model(file_path, scaled_model_path, scaling_factor, backend="blender")
-        
+        success = scale_glb_model(file_path, scaled_model_path, scaling_factor, backend="blender")  # fmt:skip
+
         if success:
             return uuid, str(scaled_model_path), scaling_factor
         else:
@@ -759,6 +770,35 @@ def rescale_asset_worker(uuid: str, file_path_str: str, scaling_factor: float) -
     except Exception as e:
         logger.error(f"Exception during scaling of {uuid}: {e}")
         return uuid, "failure", -1.0
+
+
+def recenter_asset_worker(
+    uuid: str, file_path_str: str, strategy: str, on_floor: bool
+) -> tuple[str, str, str]:
+    """
+    A simple, synchronous worker function that recenters a single asset.
+    This function will be distributed by Dask.
+    Returns: (uuid, path_to_recentered_file, strategy_used)
+    """
+    try:
+        file_path = Path(file_path_str)
+        recentered_model_path = file_path.with_stem(f"{uuid}_recentered")
+        success = recenter_glb_model(
+            file_path,
+            recentered_model_path,
+            strategy,
+            on_floor=on_floor,
+            backend="blender",
+        )
+
+        if success:
+            return uuid, str(recentered_model_path), strategy
+        else:
+            logger.warning(f"Recentering failed for {uuid}")
+            return uuid, "failure", strategy
+    except Exception as e:
+        logger.error(f"Exception during recentering of {uuid}: {e}")
+        return uuid, "failure", strategy
 
 
 def perform_rescaling_dask(version: int):
@@ -790,16 +830,16 @@ def perform_rescaling_dask(version: int):
         if uuid in objathor_annotations:
             file_path = Path(file_path_str)
             _, original_dims, _ = get_glb_dimensions(file_path)
-            analysis = extract_scale_analysis_from_objathor(uuid, objathor_annotations, original_dims)
+            analysis = extract_scale_analysis_from_objathor(uuid, objathor_annotations, original_dims)  # fmt:skip
             if analysis and analysis["misscaled"]:
                 sf = analysis["correction_factor"]
                 if sf is not None and not math.isclose(sf, 1.0, abs_tol=0.01):
-                    jobs.append({'uuid': uuid, 'file_path': file_path_str, 'scaling_factor': sf})
+                    jobs.append({"uuid": uuid, "file_path": file_path_str, "scaling_factor": sf})  # fmt:skip
 
     if not jobs:
         logger.info("No assets found requiring offline rescaling.")
         return
-    
+
     logger.info(f"Found {len(jobs)} assets for offline rescaling.")
 
     # Set up Dask and run the jobs
@@ -809,9 +849,9 @@ def perform_rescaling_dask(version: int):
 
     futures = client.map(
         rescale_asset_worker,
-        [j['uuid'] for j in jobs],
-        [j['file_path'] for j in jobs],
-        [j['scaling_factor'] for j in jobs],
+        [j["uuid"] for j in jobs],
+        [j["file_path"] for j in jobs],
+        [j["scaling_factor"] for j in jobs],
     )
 
     # Process results and prepare for DB update
@@ -821,19 +861,19 @@ def perform_rescaling_dask(version: int):
     timestamp = datetime.datetime.now().isoformat()
     successful, errors = 0, 0
 
-    with tqdm(as_completed(futures, with_results=True), total=len(jobs), desc="Rescaling assets") as pbar:
+    with tqdm(as_completed(futures, with_results=True),total=len(jobs),desc="Rescaling assets",) as pbar:  # fmt:skip
         for future, result in pbar:
             if isinstance(result, Exception):
                 errors += 1
                 continue
-            
+
             uuid, scaled_path, sf = result
             if scaled_path == "failure":
                 errors += 1
                 continue
 
             # Append data for batch update
-            update_data.append((scaled_path, sf, "objaverse-thor", version, timestamp, uuid))
+            update_data.append((scaled_path, sf, "objaverse-thor", version, timestamp, uuid))  # fmt:skip
             successful += 1
 
             if len(update_data) >= BATCH_SIZE:
@@ -870,6 +910,127 @@ def perform_rescaling_dask(version: int):
     logger.info(f"Offline rescaling complete. Success: {successful}, Errors: {errors}")
 
 
+def perform_recentering_dask(version: int):
+    """
+    Performs recentering for off-center assets using ObjaTHOR onFloor attribute
+    and Dask for parallel processing.
+    """
+    logger.info("Starting offline asset recentering with Dask...")
+
+    # Load the offline annotations first
+    objathor_annotations = load_objathor_annotation()
+    if not objathor_annotations:
+        logger.warning("ObjaTHOR annotations not found. Skipping recentering.")
+        return
+
+    # Query assets that are off-center and not yet recentered
+    conn = sqlite3.connect(EXTRA_INDEX_DB_FILE)
+    cursor = conn.cursor()
+    query = "SELECT uuid, file_path FROM assets WHERE origin_type = 'off-center' AND fs_path_recentered IS NULL"
+    params = ()
+    if LIMIT:
+        query += " LIMIT ?"
+        params += (LIMIT,)
+    target_assets = cursor.execute(query, params).fetchall()
+    conn.close()
+
+    # Identify recentering jobs from offline data
+    jobs = []
+    for uuid, file_path_str in target_assets:
+        if uuid in objathor_annotations:
+            on_floor = objathor_annotations[uuid]["onFloor"]
+            on_object = objathor_annotations[uuid]["onObject"]
+            strategy = "ground" if (on_floor or on_object) else "median"
+        else:
+            # Fallback for non-ObjaTHOR assets
+            on_floor = False
+            strategy = "median"
+
+        jobs.append(
+            {
+                "uuid": uuid,
+                "file_path": file_path_str,
+                "origin_type": strategy,
+                "on_floor": on_floor,
+            }
+        )
+
+    if not jobs:
+        logger.info("No off-center assets found requiring recentering.")
+        return
+
+    logger.info(f"Found {len(jobs)} off-center assets for recentering.")
+
+    # Set up Dask and run the jobs
+    cluster = LocalCluster(threads_per_worker=1)
+    client = Client(cluster)
+    logger.info(f"Dask dashboard available at: {client.dashboard_link}")
+
+    futures = client.map(
+        recenter_asset_worker,
+        [j["uuid"] for j in jobs],
+        [j["file_path"] for j in jobs],
+        [j["origin_type"] for j in jobs],
+        [j["on_floor"] for j in jobs],
+    )
+
+    # Process results and prepare for DB update
+    conn = sqlite3.connect(EXTRA_INDEX_DB_FILE)
+    cursor = conn.cursor()
+    update_data = []
+    timestamp = datetime.datetime.now().isoformat()
+    successful, errors = 0, 0
+
+    with tqdm(as_completed(futures, with_results=True),total=len(jobs),desc="Recentering assets",) as pbar:  # fmt:skip
+        for future, result in pbar:
+            if isinstance(result, Exception):
+                errors += 1
+                continue
+
+            uuid, recentered_path, strategy = result
+            if recentered_path == "failure":
+                errors += 1
+                continue
+
+            # Append data for batch update
+            update_data.append((recentered_path, "graphics-db", strategy, version, timestamp, uuid))  # fmt:skip
+            successful += 1
+
+            # Commit to database in batches
+            if len(update_data) >= BATCH_SIZE:
+                cursor.executemany(
+                    """UPDATE assets SET
+                       fs_path_recentered = ?,
+                       recentered_by = ?,
+                       recentering_strategy = ?,
+                       metadata_version = ?,
+                       last_updated = ?
+                       WHERE uuid = ?""",
+                    update_data,
+                )
+                conn.commit()
+                update_data = []
+
+    # Commit any remaining updates
+    if update_data:
+        cursor.executemany(
+            """UPDATE assets SET
+               fs_path_recentered = ?,
+               recentered_by = ?,
+               recentering_strategy = ?,
+               metadata_version = ?,
+               last_updated = ?
+               WHERE uuid = ?""",
+            update_data,
+        )
+        conn.commit()
+    conn.close()
+
+    client.close()
+    cluster.close()
+    logger.info(f"Offline recentering complete. Success: {successful}, Errors: {errors}")  # fmt:skip
+
+
 def main():
     global LIMIT
     global OBJATHOR_ONLY
@@ -896,6 +1057,11 @@ def main():
         help="Perform rescaling for assets using offline data and Dask (CPU-intensive, parallelized)",
     )
     parser.add_argument(
+        "--perform-recentering",
+        action="store_true",
+        help="Perform recentering for off-center assets using Dask (CPU-intensive, parallelized)",
+    )
+    parser.add_argument(
         "--limit",
         type=int,
         default=None,
@@ -917,13 +1083,14 @@ def main():
     if args.reset:
         reset_metadata()
 
-    # Run origin analysis if requested
+    if args.perform_rescaling:
+        perform_rescaling_dask(METADATA_VERSION)
+
     if args.compute_origins:
         compute_origin_types_dask(METADATA_VERSION)
 
-    # Run rescaling if requested
-    if args.perform_rescaling:
-        perform_rescaling_dask(METADATA_VERSION)
+    if args.perform_recentering:
+        perform_recentering_dask(METADATA_VERSION)
 
     for _source_name, local_dir in LOCAL_FS_PATHS.items():
         setup_index(Path(local_dir).expanduser())
