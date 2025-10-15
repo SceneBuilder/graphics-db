@@ -76,10 +76,14 @@ def classify_origin_type(file_path: Path | str) -> OriginType:
 
         # Classification logic (order matters!)
 
-        # OFF-CENTER: Origin is outside the bounding box
-        if not scene.bounding_box.contains([origin]):
+        # OFF-CENTER: Origin is outside the bounding box (with tolerance)
+        min_bounds = bounds[0] - tolerance
+        max_bounds = bounds[1] + tolerance
+        if not (origin[0] >= min_bounds[0] and origin[0] <= max_bounds[0] and
+                origin[1] >= min_bounds[1] and origin[1] <= max_bounds[1] and
+                origin[2] >= min_bounds[2] and origin[2] <= max_bounds[2]):
             return "off-center"
-        # At this point, we know origin is inside the bounding box
+        # At this point, we know origin is inside the bounding box (with tolerance)
 
         # MEDIAN: Origin is at the geometric center of the bbox
         if np.allclose(origin, box_center, atol=tolerance):

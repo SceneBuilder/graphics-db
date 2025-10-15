@@ -759,15 +759,13 @@ def main():
     if args.reset:
         reset_metadata()
 
-    # TEMPDEAC
-    # for _source_name, local_dir in LOCAL_FS_PATHS.items():
-    #     setup_index(Path(local_dir).expanduser())
-    #     compute_metadata(METADATA_VERSION, strategy=args.strategy)
-
     # Run origin analysis if requested
     if args.compute_origins:
         compute_origin_types_dask(METADATA_VERSION)
 
+    for _source_name, local_dir in LOCAL_FS_PATHS.items():
+        setup_index(Path(local_dir).expanduser())
+        compute_metadata(METADATA_VERSION, strategy=args.strategy)
 
 if __name__ == "__main__":
     main()
