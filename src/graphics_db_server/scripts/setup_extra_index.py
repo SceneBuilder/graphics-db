@@ -59,6 +59,7 @@ from graphics_db_server.utils.scale_validation import scale_glb_model
 from graphics_db_server.utils.thumbnail import generate_thumbnail_from_glb
 from graphics_db_server.scripts.setup_extra_index_objathor import (
     calc_metadata_objathor,
+    extract_scale_analysis_from_objathor,
     load_objathor_annotation,
     objathor_annotation_available,
 )
@@ -785,13 +786,15 @@ def perform_rescaling_dask(version: int):
 
     # Identify rescaling jobs from offline data
     jobs = []
-    for uuid, file_path in target_assets:
+    for uuid, file_path_str in target_assets:
         if uuid in objathor_annotations:
-            # Logic to get scaling_factor from annotation, similar to calc_metadata_objathor
-            # For demonstration, let's assume the annotation dict has a 'scaling_factor' key
-            sf = objathor_annotations[uuid].get("scaling_factor")
-            if sf and not math.isclose(sf, 1.0, abs_tol=0.01):
-                jobs.append({'uuid': uuid, 'file_path': file_path, 'scaling_factor': sf})
+            file_path = Path(file_path_str)
+            _, original_dims, _ = get_glb_dimensions(file_path)
+            analysis = extract_scale_analysis_from_objathor(uuid, objathor_annotations, original_dims)
+            if analysis and analysis["misscaled"]:
+                sf = analysis["correction_factor"]
+                if sf is not None and not math.isclose(sf, 1.0, abs_tol=0.01):
+                    jobs.append({'uuid': uuid, 'file_path': file_path_str, 'scaling_factor': sf})
 
     if not jobs:
         logger.info("No assets found requiring offline rescaling.")
