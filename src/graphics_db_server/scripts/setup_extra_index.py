@@ -812,6 +812,8 @@ def perform_rescaling_dask(version: int):
     )
 
     # Process results and prepare for DB update
+    conn = sqlite3.connect(EXTRA_INDEX_DB_FILE)
+    cursor = conn.cursor()
     update_data = []
     timestamp = datetime.datetime.now().isoformat()
     successful, errors = 0, 0
@@ -831,22 +833,34 @@ def perform_rescaling_dask(version: int):
             update_data.append((scaled_path, sf, "objaverse-thor", version, timestamp, uuid))
             successful += 1
 
-    # Commit all updates to the database
+            if len(update_data) >= BATCH_SIZE:
+                cursor.executemany(
+                    """UPDATE assets SET
+                       fs_path_rescaled = ?,
+                       scaling_factor = ?,
+                       rescaled_by = ?,
+                       metadata_version = ?,
+                       last_updated = ?
+                       WHERE uuid = ?""",
+                    update_data,
+                )
+                conn.commit()
+                update_data = []
+
+    # Commit any remaining updates
     if update_data:
-        conn = sqlite3.connect(EXTRA_INDEX_DB_FILE)
-        cursor = conn.cursor()
         cursor.executemany(
-            """UPDATE assets SET 
-               fs_path_rescaled = ?, 
-               scaling_factor = ?, 
-               rescaled_by = ?, 
-               metadata_version = ?, 
-               last_updated = ? 
+            """UPDATE assets SET
+               fs_path_rescaled = ?,
+               scaling_factor = ?,
+               rescaled_by = ?,
+               metadata_version = ?,
+               last_updated = ?
                WHERE uuid = ?""",
             update_data,
         )
         conn.commit()
-        conn.close()
+    conn.close()
 
     client.close()
     cluster.close()
