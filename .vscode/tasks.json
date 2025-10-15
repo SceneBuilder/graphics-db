@@ -51,6 +51,19 @@
                 "panel": "new"
             },
             "problemMatcher": []
+        },
+        {
+            "label": "Sync Jupytext",
+            "type": "shell",
+            "command": "jupytext",
+            "args": ["--sync", "${file}"],
+            "group": "build",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "panel": "new"
+            },
+            "problemMatcher": []
         }
     ]
 }
