@@ -508,7 +508,11 @@ async def _compute_metadata_async(
     cursor = conn.cursor()
 
     query = "SELECT uuid, file_path FROM assets WHERE metadata_version IS NULL OR metadata_version < ?"
-    target_assets = cursor.execute(query, (version,)).fetchall()
+    params = (version,)
+    if LIMIT:
+        query += " LIMIT ?"
+        params += (LIMIT,)
+    target_assets = cursor.execute(query, params).fetchall()
 
     if not target_assets:
         logger.warning(
@@ -646,7 +650,11 @@ def compute_origin_types_dask(version: int):
         SELECT uuid, file_path FROM assets
         WHERE origin_type IS NULL OR metadata_version IS NULL OR metadata_version < ?
     """
-    target_assets = cursor.execute(query, (version,)).fetchall()
+    params = (version,)
+    if LIMIT:
+        query += " LIMIT ?"
+        params += (LIMIT,)
+    target_assets = cursor.execute(query, params).fetchall()
     conn.close()
 
     if not target_assets:
@@ -720,6 +728,7 @@ def compute_origin_types_dask(version: int):
 
 
 def main():
+    global LIMIT
     parser = argparse.ArgumentParser(
         description="Setup extra index database with metadata for 3D assets"
     )
@@ -737,7 +746,14 @@ def main():
         action="store_true",
         help="Compute origin types for all assets using Dask (CPU-intensive, parallelized)",
     )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Limit the number of assets to process for testing.",
+    )
     args = parser.parse_args()
+    LIMIT = args.limit
 
     setup_database()
     if args.reset:

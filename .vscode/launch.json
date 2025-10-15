@@ -22,6 +22,19 @@
                 "${input:args}"
             ],
             "justMyCode": false
+        },
+        {
+            "name": "Setup Extra Index (Test; limit 1000)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": [
+                "${input:args}",
+                "--limit",
+                "1000"
+            ],
+            "justMyCode": false
         }
     ],
     "inputs": [
