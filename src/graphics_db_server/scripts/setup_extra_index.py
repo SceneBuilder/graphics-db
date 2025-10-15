@@ -22,6 +22,7 @@ import datetime
 import json
 import math
 import os
+import shutil
 import sqlite3
 import sys
 from pathlib import Path
@@ -490,6 +491,40 @@ def reset_metadata():
     conn.commit()
     conn.close()
     logger.info("Metadata has been reset.")
+
+
+def nuke(mode: Literal["rescale", "recenter"]):
+    """
+    Creates a backup of the SQLite database and clears data from specific columns based on the mode.
+    For 'rescale': clears fs_path_rescaled, rescaled_by, scaling_factor
+    For 'recenter': clears fs_path_recentered, recentered_by, recentering_strategy
+    """
+    db_path = Path(EXTRA_INDEX_DB_FILE)
+    timestamp = datetime.datetime.now().isoformat().replace(":", "-")
+    backup_path = db_path.with_suffix(f".backup.{timestamp}.db")
+    shutil.copy2(str(db_path), str(backup_path))
+    logger.info(f"Backup created: {backup_path}")
+
+    conn = sqlite3.connect(EXTRA_INDEX_DB_FILE)
+    cursor = conn.cursor()
+
+    if mode == "rescale":
+        columns_to_clear = ["fs_path_rescaled", "rescaled_by", "scaling_factor"]
+    elif mode == "recenter":
+        columns_to_clear = ["fs_path_recentered", "recentered_by", "recentering_strategy"]
+    else:
+        raise ValueError(f"Invalid mode: {mode}. Must be 'rescale' or 'recenter'.")
+
+    if columns_to_clear:
+        set_clause = ", ".join(f"{col} = NULL" for col in columns_to_clear)
+        cursor.execute(f"UPDATE assets SET {set_clause}")
+        affected_rows = cursor.rowcount
+        conn.commit()
+        logger.info(f"Cleared data for {len(columns_to_clear)} columns in {affected_rows} rows for mode '{mode}'.")
+    else:
+        logger.warning("No columns to clear for the given mode.")
+
+    conn.close()
 
 
 def compute_metadata(
@@ -1049,6 +1084,11 @@ def main():
     # NOTE: data_dir is sourced from core/config.py
     parser.add_argument("--reset", action="store_true", help="Clear all existing data.")
     parser.add_argument(
+        "--nuke",
+        choices=["rescale", "recenter"],
+        help="Nuke specific columns after backing up the DB. For 'rescale': clears fs_path_rescaled, rescaled_by, scaling_factor. For 'recenter': clears fs_path_recentered, recentered_by, recentering_strategy.",
+    )
+    parser.add_argument(
         "--strategy",
         choices=["vlm_only", "prefer_external", "external_only"],
         # default="prefer_external",
@@ -1093,6 +1133,9 @@ def main():
     # for _source_name, local_dir in LOCAL_FS_PATHS.items():
     #     setup_index(Path(local_dir).expanduser())
     #     compute_metadata(METADATA_VERSION, strategy=args.strategy)
+
+    if args.nuke:
+        nuke(args.nuke)
 
     if args.reset:
         reset_metadata()
