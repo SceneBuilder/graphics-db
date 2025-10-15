@@ -932,7 +932,7 @@ def perform_recentering_dask(version: int):
     # Query assets that are off-center and not yet recentered
     conn = sqlite3.connect(EXTRA_INDEX_DB_FILE)
     cursor = conn.cursor()
-    query = "SELECT uuid, file_path FROM assets WHERE origin_type = 'off-center' AND fs_path_recentered IS NULL"
+    query = "SELECT uuid, file_path, fs_path_rescaled FROM assets WHERE origin_type = 'off-center' AND fs_path_recentered IS NULL"
     params = ()
     if LIMIT:
         query += " LIMIT ?"
@@ -942,7 +942,10 @@ def perform_recentering_dask(version: int):
 
     # Identify recentering jobs from offline data
     jobs = []
-    for uuid, file_path_str in target_assets:
+    for uuid, file_path_str, fs_path_rescaled in target_assets:
+        # HACK: prefer rescaled asset (.glb) files over original, if available.
+        # NOTE: assumes rescaling occurs BEFORE recentering. (makes sense bc rescaling is more important.)
+        input_path_str = fs_path_rescaled if fs_path_rescaled else file_path_str
         if uuid in objathor_annotations:
             on_floor = objathor_annotations[uuid]["onFloor"]
             on_object = objathor_annotations[uuid]["onObject"]
@@ -955,7 +958,7 @@ def perform_recentering_dask(version: int):
         jobs.append(
             {
                 "uuid": uuid,
-                "file_path": file_path_str,
+                "file_path": input_path_str,
                 "origin_type": strategy,
                 "on_floor": on_floor,
             }
