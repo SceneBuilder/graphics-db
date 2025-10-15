@@ -26,6 +26,7 @@ torchvision = "*"
 bokeh = ">=3.8.0,<4"
 rtree = ">=1.4.1,<2"
 matplotlib-venn = ">=1.1.2,<2"
+gitpython = ">=3.1.45,<4"
 
 [pypi-dependencies]
 dask = "*"

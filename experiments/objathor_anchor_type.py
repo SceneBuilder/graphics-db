@@ -16,18 +16,53 @@
 # %% [markdown]
 # # **ObjaTHOR Anchor Type Analysis**
 
-# %%
-from graphics_db_server.scripts.setup_extra_index_objathor import load_objathor_annotation
-from graphics_db_server.core.config import OBJATHOR_ANNO_JSON_PATH
-from matplotlib_venn import venn3
-import matplotlib.pyplot as plt
+# %% [markdown]
+# ## Setup
 
+# %%
+import sqlite3
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+from matplotlib_venn import venn3
+
+from graphics_db_server.scripts.setup_extra_index_objathor import load_objathor_annotation
+from graphics_db_server.core.config import OBJATHOR_ANNO_JSON_PATH, EXTRA_INDEX_DB_FILE
+
+# %%
 # Load the ObjaTHOR annotations
 load_objathor_annotation(OBJATHOR_ANNO_JSON_PATH)
 
-# Assuming objathor_annotation is now loaded as a global dictionary
-from src.graphics_db_server.scripts.setup_extra_index_objathor import objathor_annotation
+# objathor_annotation is now loaded as a global dictionary
+from graphics_db_server.scripts.setup_extra_index_objathor import objathor_annotation
 
+
+# %%
+def print_fs_paths(uuids: list[str]):
+    """Print the file system paths (prioritizing rescaled) for given asset UUIDs."""
+    conn = sqlite3.connect(EXTRA_INDEX_DB_FILE)
+    assert Path(EXTRA_INDEX_DB_FILE).exists()
+    
+    cursor = conn.cursor()
+    for uid in uuids:
+        cursor.execute(
+            "SELECT fs_path_rescaled, fs_path FROM assets WHERE uuid = ?",
+            (uid,)
+        )
+        result = cursor.fetchone()
+        if result:
+            rescaled, original = result
+            path = rescaled if rescaled else original
+            print(f"{uid}: {path}")
+        else:
+            print(f"{uid}: Not found in extra index")
+    conn.close()
+
+
+# %% [markdown]
+# ## Experiment
+
+# %%
 # Extract sets for each boolean property
 set_floor = {uid for uid, data in objathor_annotation.items() if data.get('onFloor', False)}
 set_object = {uid for uid, data in objathor_annotation.items() if data.get('onObject', False)}
@@ -41,5 +76,26 @@ venn3([set_floor, set_object, set_wall],
 
 plt.title('Co-occurrence of ObjaTHOR Anchor Type Properties (onFloor, onObject, onWall)')
 plt.show()
+
+# %% [markdown]
+# ## Inspect
+
+# %% [markdown]
+# ### All Three
+
+# %%
+# Print paths for assets in all three categories
+print(f"Number of assets in all three categories: {len(all_three)}")
+print_fs_paths(list(all_three))
+
+# %% [markdown]
+# **Verdict**: Clasify as `onFloor` (as far as re-centering goes).
+
+# %% [markdown]
+# ### `onWall`
+
+# %%
+print(f"Number of assets in onWall category: {len(set_wall)}")
+print_fs_paths(list(set_wall))
 
 # %%

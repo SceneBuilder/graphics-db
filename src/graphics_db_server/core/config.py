@@ -1,7 +1,12 @@
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
+from git import Repo
 from pydantic import BaseModel
+
+repo_root = Repo(__file__, search_parent_directories=True).working_dir
+
 
 # Consts
 # Database
@@ -25,6 +30,7 @@ LOCAL_FS_PATHS = {
 
 # Extra index
 EXTRA_INDEX_DB_FILE = "graphics_db_extra_index.db"
+EXTRA_INDEX_DB_FILE = str(Path(f"{repo_root}/{EXTRA_INDEX_DB_FILE}").absolute())  # for scripts not located exactly at root # fmt: skip
 OBJATHOR_ANNO_JSON_PATH = "~/.objathor-assets/2023_09_23/annotations.json"  # set this to your ObjaTHOR JSON file path
 
 # Data validation
