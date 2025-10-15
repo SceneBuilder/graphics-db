@@ -514,6 +514,14 @@ async def _compute_metadata_async(
         params += (LIMIT,)
     target_assets = cursor.execute(query, params).fetchall()
 
+    if OBJATHOR_ONLY:
+        target_assets = [
+            (uuid, path_str)
+            for uuid, path_str in target_assets
+            if objathor_annotation_available(uuid)
+        ]
+        logger.info(f"Filtered to {len(target_assets)} ObjaTHOR assets for processing.")
+
     if not target_assets:
         logger.warning(
             f"All assets are already up to date with metadata version {version}."
@@ -657,6 +665,10 @@ def compute_origin_types_dask(version: int):
     target_assets = cursor.execute(query, params).fetchall()
     conn.close()
 
+    if OBJATHOR_ONLY:
+        target_assets = [(uuid, path_str) for uuid, path_str in target_assets if objathor_annotation_available(uuid)]
+        logger.info(f"Filtered to {len(target_assets)} ObjaTHOR assets for origin analysis.")
+
     if not target_assets:
         logger.info(f"All assets already have origin analysis v{version}")
         client.close()
@@ -729,6 +741,7 @@ def compute_origin_types_dask(version: int):
 
 def main():
     global LIMIT
+    global OBJATHOR_ONLY
     parser = argparse.ArgumentParser(
         description="Setup extra index database with metadata for 3D assets"
     )
@@ -752,8 +765,17 @@ def main():
         default=None,
         help="Limit the number of assets to process for testing.",
     )
+    parser.add_argument(
+        "--objathor-only",
+        action="store_true",
+        default=False,
+        help="Only target assets contained in ObjaTHOR for metadata computation.",
+    )
     args = parser.parse_args()
     LIMIT = args.limit
+    OBJATHOR_ONLY = args.objathor_only
+    if OBJATHOR_ONLY:
+        load_objathor_annotation()
 
     setup_database()
     if args.reset:
@@ -766,6 +788,7 @@ def main():
     for _source_name, local_dir in LOCAL_FS_PATHS.items():
         setup_index(Path(local_dir).expanduser())
         compute_metadata(METADATA_VERSION, strategy=args.strategy)
+
 
 if __name__ == "__main__":
     main()
