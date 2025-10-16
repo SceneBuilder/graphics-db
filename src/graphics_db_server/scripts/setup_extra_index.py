@@ -49,7 +49,7 @@ from graphics_db_server.core.config import (
     VLM_PROVIDER_BASE_URL,
 )
 from graphics_db_server.core.config import LOGFIRE_SERVICE_NAME
-from graphics_db_server.logging import logger
+from graphics_db_server.logging import configure_logging, logger
 from graphics_db_server.tools.read_file import read_media_file
 from graphics_db_server.utils.geometry import (
     calc_optimal_scaling_factor,
@@ -1083,6 +1083,7 @@ def perform_recentering_dask(version: int):
                 )
                 conn.commit()
                 update_data = []
+                logger.info(f"Committed batch of {BATCH_SIZE} updates to DB.")
 
     # Commit any remaining updates
     if update_data:
@@ -1105,6 +1106,8 @@ def perform_recentering_dask(version: int):
 
 
 def main():
+    configure_logging(level="INFO")
+
     global LIMIT
     global OBJATHOR_ONLY
     parser = argparse.ArgumentParser(

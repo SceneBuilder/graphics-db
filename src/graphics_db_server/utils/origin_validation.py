@@ -277,7 +277,7 @@ def recenter_glb_model(
             cleanup_scene()
             cleanup_blender_memory()
 
-        logger.debug(f"Recentered {input_path} to {output_path} using {origin_type}")
+        # logger.debug(f"Recentered {input_path} to {output_path} using {origin_type}")  # TEMPDEAC
         return True
 
     except Exception as e:
