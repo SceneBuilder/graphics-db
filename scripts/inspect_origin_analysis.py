@@ -1,22 +1,18 @@
 import sqlite3
 import os
 import pathlib
-import logging
+from loguru import logger
 
 # --- Configuration ---
 DB_PATH = "graphics_db_extra_index.db"
 OUTPUT_BASE_DIR = "test_output"
 TABLE_NAME = "assets"
-# PATH_COLUMN = "fs_path"
-PATH_COLUMN = "fs_path_rescaled"
+PATH_COLUMN = "fs_path"
+RESCALED_PATH_COLUMN = "fs_path_rescaled"
+RECENTERED_PATH_COLUMN = "fs_path_recentered"
 TYPE_COLUMN = "origin_type"
 
 # Setup basic logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
 
 def classify_and_symlink_files():
     """
@@ -25,7 +21,7 @@ def classify_and_symlink_files():
     """
     # Check if the database file exists
     if not os.path.exists(DB_PATH):
-        logging.error(f"Database file not found at '{DB_PATH}'. Please check the path.")
+        logger.error(f"Database file not found at '{DB_PATH}'. Please check the path.")
         return
 
     try:
@@ -35,65 +31,81 @@ def classify_and_symlink_files():
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 
-        logging.info(f"Connected to database: {DB_PATH}")
+        logger.info(f"Connected to database: {DB_PATH}")
         
-        query = f"SELECT fs_path, fs_path_rescaled, {TYPE_COLUMN} FROM {TABLE_NAME}"
-        logging.info(f"Executing query: {query}")
+        query = f"SELECT {PATH_COLUMN}, {RESCALED_PATH_COLUMN}, {RECENTERED_PATH_COLUMN}, {TYPE_COLUMN} FROM {TABLE_NAME} WHERE {PATH_COLUMN} IS NOT NULL"
+        logger.info(f"Executing query: {query}")
         
         cursor.execute(query)
         records = cursor.fetchall()
 
         if not records:
-            logging.warning("No records found in the database. Nothing to do.")
+            logger.warning("No records found in the database. Nothing to do.")
             return
 
-        logging.info(f"Found {len(records)} records to process.")
+        logger.info(f"Found {len(records)} records to process.")
 
         # Process each record
         for record in records:
             try:
                 origin_type = record[TYPE_COLUMN]
-                fs_path = record['fs_path']
-                fs_path_rescaled = record['fs_path_rescaled']
-                if fs_path_rescaled and fs_path_rescaled.strip():
-                    original_file_path_str = fs_path_rescaled
-                else:
-                    original_file_path_str = fs_path
+                
+                # Determine primary path: prefer rescaled, then original
+                primary_file_path_str = None
+                if record[RESCALED_PATH_COLUMN] and record[RESCALED_PATH_COLUMN].strip():
+                    primary_file_path_str = record[RESCALED_PATH_COLUMN]
+                elif record[PATH_COLUMN] and record[PATH_COLUMN].strip():
+                    primary_file_path_str = record[PATH_COLUMN]
 
-                if not origin_type or not original_file_path_str:
-                    logging.warning(f"Skipping record with missing data: {dict(record)}")
+                if not origin_type or not primary_file_path_str:
+                    logger.warning(f"Skipping record with missing data: {dict(record)}")
                     continue
 
-                original_file_path = pathlib.Path(original_file_path_str).resolve()
+                primary_file_path = pathlib.Path(primary_file_path_str).resolve()
 
-                # Ensure the original file exists before creating a link
-                if not original_file_path.exists():
-                    logging.warning(f"Source file does not exist, skipping: {original_file_path}")
+                # Ensure the primary file exists before creating a link
+                if not primary_file_path.exists():
+                    logger.warning(f"Primary source file does not exist, skipping: {primary_file_path}")
                     continue
 
-                # Create target directory and symbolic link
+                # Create target directory
                 target_dir = pathlib.Path(OUTPUT_BASE_DIR) / origin_type
                 target_dir.mkdir(parents=True, exist_ok=True)
 
-                link_path = target_dir / original_file_path.name
+                # Symlink primary file
+                primary_link_path = target_dir / primary_file_path.name
                 
-                # Check if a link/file already exists to avoid errors
-                if link_path.exists() or link_path.is_symlink():
-                    logging.info(f"Link already exists, skipping: {link_path}")
+                if primary_link_path.exists() or primary_link_path.is_symlink():
+                    logger.info(f"Primary link already exists, skipping: {primary_link_path}")
                 else:
-                    link_path.symlink_to(original_file_path)
-                    logging.info(f"Created link: {link_path} -> {original_file_path}")
+                    primary_link_path.symlink_to(primary_file_path)
+                    logger.info(f"Created primary link: {primary_link_path} -> {primary_file_path}")
+
+                # Handle recentered file if available
+                recentered_file_path_str = record[RECENTERED_PATH_COLUMN]
+                if recentered_file_path_str and recentered_file_path_str.strip():
+                    recentered_file_path = pathlib.Path(recentered_file_path_str).resolve()
+                    if not recentered_file_path.exists():
+                        logger.warning(f"Recentered source file does not exist, skipping: {recentered_file_path}")
+                    else:
+                        recentered_link_path = target_dir / recentered_file_path.name
+                        
+                        if recentered_link_path.exists() or recentered_link_path.is_symlink():
+                            logger.info(f"Recentered link already exists, skipping: {recentered_link_path}")
+                        else:
+                            recentered_link_path.symlink_to(recentered_file_path)
+                            logger.info(f"Created recentered link: {recentered_link_path} -> {recentered_file_path}")
 
             except (sqlite3.Error, KeyError, TypeError) as e:
-                logging.error(f"Error processing record {dict(record)}: {e}")
+                logger.error(f"Error processing record {dict(record)}: {e}")
 
     except sqlite3.Error as e:
-        logging.error(f"Database error: {e}")
+        logger.error(f"Database error: {e}")
     finally:
         if 'conn' in locals() and conn:
             conn.close()
-            logging.info("Database connection closed.")
+            logger.info("Database connection closed.")
 
 if __name__ == "__main__":
     classify_and_symlink_files()
-    logging.info("Script finished.")
+    logger.info("Script finished.")
