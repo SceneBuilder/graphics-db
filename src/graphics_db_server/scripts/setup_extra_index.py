@@ -80,9 +80,11 @@ ROUND_DIGITS = 3
 DEBUG = True
 # DEBUG = False
 
+
 def is_running_in_dask_worker() -> bool:
     """Checks for the DASK_WORKER_ID environment variable."""
-    return 'DASK_WORKER_ID' in os.environ
+    return "DASK_WORKER_ID" in os.environ
+
 
 if not is_running_in_dask_worker():
     logfire.configure(service_name=LOGFIRE_SERVICE_NAME)
@@ -500,18 +502,43 @@ def nuke(mode: Literal["rescale", "recenter"]):
     For 'recenter': clears fs_path_recentered, recentered_by, recentering_strategy
     """
     db_path = Path(EXTRA_INDEX_DB_FILE)
-    timestamp = datetime.datetime.now().isoformat().replace(":", "-")
+    timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     backup_path = db_path.with_suffix(f".backup.{timestamp}.db")
-    shutil.copy2(str(db_path), str(backup_path))
-    logger.info(f"Backup created: {backup_path}")
 
+    # Create a safe SQLite backup of the original database
     conn = sqlite3.connect(EXTRA_INDEX_DB_FILE)
+
+    # Check that data exists
+    cursor = conn.cursor()
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+    tables = cursor.fetchall()
+    if not tables:
+        logger.warning("Source DB has no tables.")
+    else:
+        for table_name in tables:
+            table_name = table_name[0]
+            cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+            row_count = cursor.fetchone()[0]
+            logger.info(f"Source table '{table_name}' has {row_count} rows.")
+    cursor.close()
+
+    backup_conn = sqlite3.connect(str(backup_path))
+    with conn:
+        with backup_conn:
+            conn.backup(backup_conn)
+    backup_conn.close()
+    logger.info(f"Backup of original DB created: {backup_path}")
+
     cursor = conn.cursor()
 
     if mode == "rescale":
         columns_to_clear = ["fs_path_rescaled", "rescaled_by", "scaling_factor"]
     elif mode == "recenter":
-        columns_to_clear = ["fs_path_recentered", "recentered_by", "recentering_strategy"]
+        columns_to_clear = [
+            "fs_path_recentered",
+            "recentered_by",
+            "recentering_strategy",
+        ]
     else:
         raise ValueError(f"Invalid mode: {mode}. Must be 'rescale' or 'recenter'.")
 
@@ -520,7 +547,9 @@ def nuke(mode: Literal["rescale", "recenter"]):
         cursor.execute(f"UPDATE assets SET {set_clause}")
         affected_rows = cursor.rowcount
         conn.commit()
-        logger.info(f"Cleared data for {len(columns_to_clear)} columns in {affected_rows} rows for mode '{mode}'.")
+        logger.info(
+            f"Cleared data for {len(columns_to_clear)} columns in {affected_rows} rows for mode '{mode}'."
+        )
     else:
         logger.warning("No columns to clear for the given mode.")
 
@@ -769,7 +798,7 @@ def compute_origin_types_dask(version: int):
             successful += 1
 
             # Commit to database in batches
-            
+
             if len(update_data) >= BATCH_SIZE:
                 cursor.executemany(
                     "UPDATE assets SET origin_type = ?, metadata_version = ?, last_updated = ? WHERE uuid = ?",
@@ -1122,6 +1151,12 @@ def main():
         default=False,
         help="Only target assets contained in ObjaTHOR for metadata computation.",
     )
+    parser.add_argument(
+        "--zombie",
+        action="store_true",
+        default=False,
+        help="Keep reviving dask worker process even if they die.",
+    )
     args = parser.parse_args()
     LIMIT = args.limit
     OBJATHOR_ONLY = args.objathor_only
@@ -1134,11 +1169,14 @@ def main():
     #     setup_index(Path(local_dir).expanduser())
     #     compute_metadata(METADATA_VERSION, strategy=args.strategy)
 
+    if args.reset:
+        reset_metadata()
+
     if args.nuke:
         nuke(args.nuke)
 
-    if args.reset:
-        reset_metadata()
+    if args.zombie:
+        dask.config.set({"distributed.scheduler.allowed-failures": 1000})  # per worker; multiply by worker count for total! # fmt:skip
 
     if args.rescale:
         perform_rescaling_dask(METADATA_VERSION)
@@ -1148,6 +1186,7 @@ def main():
 
     if args.recenter:
         perform_recentering_dask(METADATA_VERSION)
+
 
 if __name__ == "__main__":
     main()
