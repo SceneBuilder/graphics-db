@@ -5,7 +5,7 @@ from graphics_db_server.core.config import GRAPHICS_DB_BASE_URL
 from graphics_db_server.logging import logger
 
 
-def test_report_generation(query_text: str):
+def test_report_generation(query_text: str, image_format: str = "url"):
     """
     Tests LLM/VLM-consumable object search report.
     """
@@ -17,18 +17,25 @@ def test_report_generation(query_text: str):
     objects = objects_response.json()
     response = requests.get(
         f"{GRAPHICS_DB_BASE_URL}/api/v0/objects/report",
-        params={"uids": [object["uid"] for object in objects]},
+        params={
+            "uids": [object["uid"] for object in objects],
+            "image_format": image_format,
+        },
     )
     assert response.status_code == 200
     response_json = response.json()
     assert len(response_json) > 0
 
     # Save the markdown report to a file
-    output_file = Path(__file__).parent / "output_search_report.md"
+    output_filename = "output_search_report.md"
+    if image_format != "url":
+        output_filename = f"output_search_report_{image_format}.md"
+    output_file = Path(__file__).parent / output_filename
     with open(output_file, "w") as f:
         f.write(response_json)
     logger.info(f"Saved search report to {output_file}")
 
 
 if __name__ == "__main__":
-    test_report_generation("a blue car")
+    test_report_generation("a blue car", image_format="url")
+    test_report_generation("a blue car", image_format="sketchfab")

@@ -36,6 +36,19 @@
             "justMyCode": false
         },
         {
+            "name": "debugpy (notJustMyCode, 3 args)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": [
+                "${input:arg1}",
+                "${input:arg2}",
+                "${input:arg3}"
+            ],
+            "justMyCode": false
+        },
+        {
             "name": "Setup Extra Index (Test; limit 1000)",
             "type": "debugpy",
             "request": "launch",

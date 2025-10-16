@@ -22,6 +22,7 @@ dependencies = [
   "psycopg[binary, pool]",
   "pydantic",
   "pydantic-settings",
+  "requests",
   "pyvista",
   "rich",
   "torch",
