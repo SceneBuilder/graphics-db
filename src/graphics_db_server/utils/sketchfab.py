@@ -42,6 +42,25 @@ def get_sketchfab_thumbnail_url(uid: str) -> Optional[str]:
     largest_thumbnail = max(thumbnails, key=lambda x: x["width"] * x["height"])
     return largest_thumbnail["url"]
 
+def get_sketchfab_model_name(uid: str) -> Optional[str]:
+    """
+    Gets the name of a Sketchfab model.
+    """
+    model_info = get_sketchfab_model_info(uid)
+    return model_info.get("name") if model_info else None
+
+
+def get_sketchfab_model_description(uid: str) -> Optional[str]:
+    """
+    Gets the description of a Sketchfab model.
+
+    NOTE: Sketchfab Data API does not have a `description` field,
+          meaning this function will always return None.
+    """
+    model_info = get_sketchfab_model_info(uid)
+    return model_info.get("description") if model_info else None
+
+
 def get_sketchfab_thumbnails(uids: list[str]) -> dict[str, str]:
     """
     Gets thumbnail URLs for a list of Sketchfab model UIDs.

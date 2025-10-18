@@ -261,6 +261,13 @@ def generate_object_search_report(
         with get_db_connection() as conn:
             asset = crud.get_asset_by_uid(conn, uid)
         doc += f"\n### {uid}"
+        if find_metadata:
+            model_name = sketchfab.get_sketchfab_model_name(uid)
+            if model_name:
+                doc += "\n"
+                doc += "\n**Name**:"
+                doc += "\n"
+                doc += f"\n{model_name}"
         doc += "\n"
         doc += "\n**Thumbnails**:"
         doc += "\n"
@@ -288,19 +295,5 @@ def generate_object_search_report(
         doc += "\n**Source**:"
         doc += "\n"
         doc += f"\n{asset['source']}"
-        if find_metadata:
-            # doc += "\n"
-            # doc += "\n**Name**:"
-            # doc += "\n"
-            # doc += f"\n{requests.}:"
-            pass
-            # TODO: implement name-finding via Sketchfab API
-            #       (and perhaps on-the-fly saving into extra_index_db)
-            # uid,
-            # url,
-            # tags,
-            # source,
-            # license,
-            # asset_type
 
     return doc
