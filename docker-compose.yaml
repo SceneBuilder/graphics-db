@@ -38,6 +38,8 @@ services:
         condition: service_healthy
     env_file:
         - .env
+    volumes:
+      - polyhaven_cache:/root/.polyhaven_cache
 
   index:
     image: graphics-db-server-setup
@@ -48,6 +50,8 @@ services:
         condition: service_completed_successfully
     env_file:
         - .env
+    volumes:
+      - polyhaven_cache:/root/.polyhaven_cache
     # volumes:
     #   - ~/.objaverse:/root/.objaverse
     command: python src/graphics_db_server/scripts/ingest_data.py
@@ -60,6 +64,7 @@ services:
       - ./src:/app/src
       - ~/.objaverse:/root/.objaverse
       - /media/ycho358/Expansion/.cache/huggingface/datasets:/media/ycho358/Expansion/.cache/huggingface/datasets
+      - polyhaven_cache:/root/.polyhaven_cache
     depends_on:
       db:
         condition: service_healthy
@@ -73,3 +78,4 @@ services:
 
 volumes:
   postgres_data:
+  polyhaven_cache:
