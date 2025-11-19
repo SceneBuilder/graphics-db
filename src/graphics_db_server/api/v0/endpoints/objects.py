@@ -17,6 +17,7 @@ from graphics_db_server.sources.from_objaverse import (
     get_thumbnails,
     locate_objects,
 )
+from graphics_db_server.utils import sketchfab
 from graphics_db_server.utils.scale_validation import validate_object_scales
 from graphics_db_server.utils.geometry import get_glb_dimensions
 from graphics_db_server.utils.rounding import safe_round_dict
@@ -75,6 +76,7 @@ def search_objects(query: str, top_k: int = 5, validate_scale: bool = False):
 class ObjectThumbnailsRequest(BaseModel):
     uids: list[str]
     format: str = "urls"  # "urls" or "base64" or "path"
+    source: str = "objaverse"  # "objaverse" or "sketchfab"
     # TODO: change urls → url, after confirming it is better
 
 
@@ -114,6 +116,15 @@ def get_object_thumbnails(request: ObjectThumbnailsRequest):
     Gets object thumbnails for a list of 3D object UIDs.
     Returns either base64-encoded data or URLs based on format parameter.
     """
+    if request.source == "sketchfab":
+        if request.format != "urls":
+            raise HTTPException(
+                status_code=400,
+                detail="Only 'urls' format is supported for sketchfab source",
+            )
+        response_data = sketchfab.get_sketchfab_thumbnails(request.uids)
+        return JSONResponse(content=response_data)
+
     object_paths = download_objects(request.uids)
 
     response_data = {}
@@ -235,7 +246,7 @@ def locate_object_glb(object_uid: str):
 def generate_object_search_report(
     uids: list[str] = Query(),
     report_format: str = "markdown",
-    image_format: str = "url",
+    image_format: str = "url",  # "url", "path", or "sketchfab"
     find_metadata: bool = False,
     up_axis: str = "y"
 ):
@@ -250,6 +261,13 @@ def generate_object_search_report(
         with get_db_connection() as conn:
             asset = crud.get_asset_by_uid(conn, uid)
         doc += f"\n### {uid}"
+        if find_metadata:
+            model_name = sketchfab.get_sketchfab_model_name(uid)
+            if model_name:
+                doc += "\n"
+                doc += "\n**Name**:"
+                doc += "\n"
+                doc += f"\n{model_name}"
         doc += "\n"
         doc += "\n**Thumbnails**:"
         doc += "\n"
@@ -263,6 +281,12 @@ def generate_object_search_report(
             case "path":
                 object_paths = locate_objects([uid]) or download_objects([uid])
                 doc += f"\n![thumbnail_for_{uid}]({get_thumbnails(object_paths)[uid]})"
+            case "sketchfab":
+                thumbnail_url = sketchfab.get_sketchfab_thumbnail_url(uid)
+                if thumbnail_url:
+                    doc += f"\n![thumbnail_for_{uid}]({thumbnail_url})"
+                else:
+                    doc += f"\n*Sketchfab thumbnail not found for {uid}*"
         doc += "\n"
         doc += "\n**Metadata**:"
         doc += "\n"
@@ -271,19 +295,5 @@ def generate_object_search_report(
         doc += "\n**Source**:"
         doc += "\n"
         doc += f"\n{asset['source']}"
-        if find_metadata:
-            # doc += "\n"
-            # doc += "\n**Name**:"
-            # doc += "\n"
-            # doc += f"\n{requests.}:"
-            pass
-            # TODO: implement name-finding via Sketchfab API
-            #       (and perhaps on-the-fly saving into extra_index_db)
-            # uid,
-            # url,
-            # tags,
-            # source,
-            # license,
-            # asset_type
 
     return doc

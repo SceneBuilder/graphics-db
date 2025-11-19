@@ -1,0 +1,60 @@
+[project]
+name = "graphics-db-server"
+version = "0.0.1"
+description = "Search and download graphics assets."
+authors = ["Yunho Cho <opensource@yunhocho.com>"]
+channels = ["conda-forge", "pytorch"]
+platforms = ["linux-64", "osx-64", "osx-arm64"]
+
+[tasks]
+# Development tasks
+dev = "uvicorn graphics_db_server.main:app --reload"
+test = "pytest"
+test-cov = "pytest --cov=src/graphics_db_server --cov-report=html"
+
+# Docker tasks
+docker-build = "docker compose --profile setup up --build"
+docker-setup = "docker compose --profile setup up"
+docker-api = "docker compose --profile api up"
+
+[dependencies]
+numpy = "<2"
+python = ">=3.11, <3.12"
+pytorch = "*"
+scipy = "*"
+torchvision = "*"
+gitpython = ">=3.1.45,<4"
+
+[pypi-dependencies]
+bpy = ">=4.4.0, <5"
+dask = "*"
+distributed = "*"
+compress-pickle = "*"
+fastapi = "*"
+logfire = "*"
+loguru = "*"
+objaverse = "*"
+openai = "*"
+open_clip_torch = "*"
+pgvector = "*"
+psycopg = { version = "*", extras = ["binary", "pool"] }
+pydantic = "*"
+pydantic_ai = "*"
+pydantic-settings = "*"
+pyvista = "*"
+requests = "*"
+rich = "*"
+sentence-transformers = "*"
+trimesh = "*"
+uvicorn = "*"
+graphics-db-server = { path = ".", editable = true }
+
+[feature.dev.dependencies]
+bokeh = ">=3.8.0,<4"
+matplotlib-venn = ">=1.1.2,<2"
+rtree = ">=1.4.1,<2"
+pytest = "*"
+pytest-cov = "*"
+
+[environments]
+default = { features = ["dev"], solve-group = "default" }

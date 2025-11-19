@@ -5,12 +5,89 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "debugpy (notJustMyCode",
+            "name": "debugpy (notJustMyCode)",
             "type": "debugpy",
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
             "justMyCode": false
+        },
+        {
+            "name": "debugpy (notJustMyCode, 1 arg)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": [
+                "${input:arg1}"
+            ],
+            "justMyCode": false
+        },
+        {
+            "name": "debugpy (notJustMyCode, 2 args)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": [
+                "${input:arg1}",
+                "${input:arg2}"
+            ],
+            "justMyCode": false
+        },
+        {
+            "name": "debugpy (notJustMyCode, 3 args)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": [
+                "${input:arg1}",
+                "${input:arg2}",
+                "${input:arg3}"
+            ],
+            "justMyCode": false
+        },
+        {
+            "name": "Setup Extra Index (Test; limit 1000)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": [
+                "${input:arg1}",
+                "--limit",
+                "1000",
+                "--objathor-only"
+            ],
+            "justMyCode": false
+        },
+        {
+            "name": "Setup Extra Index (Test; limit 1000) (2 args)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": [
+                "${input:arg1}",
+                "${input:arg2}",
+                "--limit",
+                "1000",
+                "--objathor-only"
+            ],
+            "justMyCode": false
         }
+    ],
+    "inputs": [
+        {
+            "id": "arg1",
+            "type": "promptString",
+            "description": "An argument."
+        },
+        {
+            "id": "arg2",
+            "type": "promptString",
+            "description": "An argument."
+        },
     ]
 }

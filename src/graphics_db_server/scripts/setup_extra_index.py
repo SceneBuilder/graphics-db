@@ -21,13 +21,16 @@ import asyncio
 import datetime
 import json
 import math
+import os
+import shutil
 import sqlite3
 import sys
 from pathlib import Path
 from typing import Literal
 
-# import tqdm
+import dask
 import logfire
+from dask.distributed import Client, LocalCluster, as_completed
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 from pydantic_ai import Agent
@@ -46,11 +49,15 @@ from graphics_db_server.core.config import (
     VLM_PROVIDER_BASE_URL,
 )
 from graphics_db_server.core.config import LOGFIRE_SERVICE_NAME
-from graphics_db_server.logging import logger
+from graphics_db_server.logging import configure_logging, logger
 from graphics_db_server.tools.read_file import read_media_file
 from graphics_db_server.utils.geometry import (
     calc_optimal_scaling_factor,
     get_glb_dimensions,
+)
+from graphics_db_server.utils.origin_validation import (
+    classify_origin_type_with_uuid,
+    recenter_glb_model,
 )
 from graphics_db_server.utils.pai import transform_paths_to_binary
 from graphics_db_server.utils.rounding import safe_round
@@ -58,11 +65,13 @@ from graphics_db_server.utils.scale_validation import scale_glb_model
 from graphics_db_server.utils.thumbnail import generate_thumbnail_from_glb
 from graphics_db_server.scripts.setup_extra_index_objathor import (
     calc_metadata_objathor,
+    extract_scale_analysis_from_objathor,
+    load_objathor_annotation,
     objathor_annotation_available,
 )
 
 # Configuration
-THUMBNAIL_DIR = Path("/media/ycho358/YunhoStrgExt/graphics_db_thumbnails")
+THUMBNAIL_DIR = Path("/mnt/4TBStorageA/ycho358/graphics_db_thumbnails")
 METADATA_VERSION = 1  # NOTE: increment with logic changes
 BATCH_SIZE = 100  # for periodic DB commits
 MAX_CONCURRENT = 100  # for VLM calls
@@ -71,8 +80,15 @@ ROUND_DIGITS = 3
 DEBUG = True
 # DEBUG = False
 
-logfire.configure(service_name=LOGFIRE_SERVICE_NAME)
-logfire.instrument_pydantic_ai()
+
+def is_running_in_dask_worker() -> bool:
+    """Checks for the DASK_WORKER_ID environment variable."""
+    return "DASK_WORKER_ID" in os.environ
+
+
+if not is_running_in_dask_worker():
+    logfire.configure(service_name=LOGFIRE_SERVICE_NAME)
+    logfire.instrument_pydantic_ai()
 
 
 def setup_database():
@@ -107,6 +123,10 @@ def setup_database():
         "fs_path": "TEXT",
         "fs_path_rescaled": "TEXT",
         "rescaled_by": "TEXT",
+        "origin_type": "TEXT",  # off-center, median, ground, contained
+        "fs_path_recentered": "TEXT",
+        "recentered_by": "TEXT",
+        "recentering_strategy": "TEXT",
     }
 
     cursor.execute("PRAGMA table_info(assets)")
@@ -151,7 +171,9 @@ def setup_index(data_dir: Path):
 
     with tqdm(total=len(asset_files), desc="Indexing assets") as pbar:
         while True:
-            batch = [item for _, item in zip(range(BATCH_SIZE*10), asset_data_generator)]
+            batch = [
+                item for _, item in zip(range(BATCH_SIZE * 10), asset_data_generator)
+            ]
             if not batch:
                 break
             cursor.executemany(
@@ -442,13 +464,13 @@ def reset_metadata():
     """
     Clear all metadata.
     """
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(EXTRA_INDEX_DB_FILE)
     cursor = conn.cursor()
 
-    print("Resetting all existing metadata")
+    logger.info("Resetting all existing metadata")
     cursor.execute("""
         UPDATE assets SET
-            misscaled = NULL, 
+            misscaled = NULL,
             misscaling_type = NULL,
             dims_x = NULL,
             dims_y = NULL,
@@ -457,16 +479,81 @@ def reset_metadata():
             dims_yr = NULL,
             dims_zr = NULL,
             scaling_factor = NULL,
-            correction_factor = NULL,
             metadata_version = NULL,
             last_updated = NULL,
             thumbnail_paths = NULL,
             fs_path = NULL,
             fs_path_rescaled = NULL,
-            rescaled_by = NULL
+            rescaled_by = NULL,
+            origin_type = NULL,
+            fs_path_recentered = NULL,
+            recentered_by = NULL,
+            recentering_strategy = NULL
     """)
     conn.commit()
+    conn.close()
     logger.info("Metadata has been reset.")
+
+
+def nuke(mode: Literal["rescale", "recenter"]):
+    """
+    Creates a backup of the SQLite database and clears data from specific columns based on the mode.
+    For 'rescale': clears fs_path_rescaled, rescaled_by, scaling_factor
+    For 'recenter': clears fs_path_recentered, recentered_by, recentering_strategy
+    """
+    db_path = Path(EXTRA_INDEX_DB_FILE)
+    timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    backup_path = db_path.with_suffix(f".backup.{timestamp}.db")
+
+    # Create a safe SQLite backup of the original database
+    conn = sqlite3.connect(EXTRA_INDEX_DB_FILE)
+
+    # Check that data exists
+    cursor = conn.cursor()
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+    tables = cursor.fetchall()
+    if not tables:
+        logger.warning("Source DB has no tables.")
+    else:
+        for table_name in tables:
+            table_name = table_name[0]
+            cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+            row_count = cursor.fetchone()[0]
+            logger.info(f"Source table '{table_name}' has {row_count} rows.")
+    cursor.close()
+
+    backup_conn = sqlite3.connect(str(backup_path))
+    with conn:
+        with backup_conn:
+            conn.backup(backup_conn)
+    backup_conn.close()
+    logger.info(f"Backup of original DB created: {backup_path}")
+
+    cursor = conn.cursor()
+
+    if mode == "rescale":
+        columns_to_clear = ["fs_path_rescaled", "rescaled_by", "scaling_factor"]
+    elif mode == "recenter":
+        columns_to_clear = [
+            "fs_path_recentered",
+            "recentered_by",
+            "recentering_strategy",
+        ]
+    else:
+        raise ValueError(f"Invalid mode: {mode}. Must be 'rescale' or 'recenter'.")
+
+    if columns_to_clear:
+        set_clause = ", ".join(f"{col} = NULL" for col in columns_to_clear)
+        cursor.execute(f"UPDATE assets SET {set_clause}")
+        affected_rows = cursor.rowcount
+        conn.commit()
+        logger.info(
+            f"Cleared data for {len(columns_to_clear)} columns in {affected_rows} rows for mode '{mode}'."
+        )
+    else:
+        logger.warning("No columns to clear for the given mode.")
+
+    conn.close()
 
 
 def compute_metadata(
@@ -480,6 +567,7 @@ def compute_metadata(
         max_concurrent (int): Maximum number of concurrent LLM API calls.
         strategy (str): Annotation strategy - 'vlm_only', 'prefer_external', or 'external_only'.
     """
+    load_objathor_annotation()
     asyncio.run(_compute_metadata_async(version, max_concurrent, strategy))
 
 
@@ -498,7 +586,19 @@ async def _compute_metadata_async(
     cursor = conn.cursor()
 
     query = "SELECT uuid, file_path FROM assets WHERE metadata_version IS NULL OR metadata_version < ?"
-    target_assets = cursor.execute(query, (version,)).fetchall()
+    params = (version,)
+    if LIMIT:
+        query += " LIMIT ?"
+        params += (LIMIT,)
+    target_assets = cursor.execute(query, params).fetchall()
+
+    if OBJATHOR_ONLY:
+        target_assets = [
+            (uuid, path_str)
+            for uuid, path_str in target_assets
+            if objathor_annotation_available(uuid)
+        ]
+        logger.info(f"Filtered to {len(target_assets)} ObjaTHOR assets for processing.")
 
     if not target_assets:
         logger.warning(
@@ -530,7 +630,7 @@ async def _compute_metadata_async(
                 if strategy in ["vlm_only", "prefer_external"]:
                     thumbnail_paths = generate_thumbnails(uuid, path_str, THUMBNAIL_DIR)
                     thumbnail_paths = [str(path) for path in thumbnail_paths]  # TEMP
-                
+
                 metadata = await calc_metadata_async(
                     file_path,
                     thumbnail_paths=thumbnail_paths,
@@ -608,10 +708,418 @@ async def _compute_metadata_async(
     )
 
 
+def compute_origin_types_dask(version: int):
+    """
+    Compute origin types for all assets using Dask for parallel processing.
+
+    This is optimized for large-scale processing (millions of assets) using
+    distributed computing with Dask.
+
+    Args:
+        version: Metadata version number (same as used for scale analysis).
+                 Assets with origin_type=NULL or metadata_version < version will be processed.
+    """
+    logger.info("Starting origin type analysis with Dask...")
+
+    # Set up Dask cluster
+    cluster = LocalCluster(
+        threads_per_worker=1,  # for CPU-bound tasks
+    )
+    client = Client(cluster)
+    logger.info(f"Dask dashboard available at: {client.dashboard_link}")
+
+    # Query assets that need origin analysis
+    conn = sqlite3.connect(EXTRA_INDEX_DB_FILE)
+    cursor = conn.cursor()
+
+    query = """
+        SELECT uuid, file_path FROM assets
+        WHERE origin_type IS NULL OR metadata_version IS NULL OR metadata_version < ?
+    """
+    params = (version,)
+    if LIMIT:
+        query += " LIMIT ?"
+        params += (LIMIT,)
+    target_assets = cursor.execute(query, params).fetchall()
+    conn.close()
+
+    if OBJATHOR_ONLY:
+        target_assets = [
+            (uuid, path_str)
+            for uuid, path_str in target_assets
+            if objathor_annotation_available(uuid)
+        ]
+        logger.info(f"Filtered to {len(target_assets)} ObjaTHOR assets for origin analysis.")  # fmt:skip
+
+    if not target_assets:
+        logger.info(f"All assets already have origin analysis v{version}")
+        client.close()
+        cluster.close()
+        return
+
+    logger.info(f"Found {len(target_assets)} assets requiring origin analysis")
+
+    # Submit tasks using client.map for memory efficiency
+    logger.info("Submitting origin type analysis tasks to Dask...")
+    futures = client.map(
+        classify_origin_type_with_uuid,
+        [uuid for uuid, _ in target_assets],
+        [fp for _, fp in target_assets],
+    )
+
+    # Process results as they complete to avoid holding them all in memory
+    logger.info("Processing results...")
+    conn = sqlite3.connect(EXTRA_INDEX_DB_FILE)
+    cursor = conn.cursor()
+
+    successful = 0
+    errors = 0
+    update_data = []
+    timestamp = datetime.datetime.now().isoformat()
+
+    with tqdm(
+        as_completed(futures, with_results=True),
+        total=len(target_assets),
+        desc="Analyzing origins",
+    ) as pbar:
+        for future, result in pbar:
+            if isinstance(result, Exception):
+                logger.error(f"Task failed with exception: {result}")
+                errors += 1
+                continue
+
+            uuid, origin_type = result
+            if origin_type == "error":
+                errors += 1
+                continue
+
+            # Append data for batch update
+            update_data.append((origin_type, version, timestamp, uuid))
+            successful += 1
+
+            # Commit to database in batches
+
+            if len(update_data) >= BATCH_SIZE:
+                cursor.executemany(
+                    "UPDATE assets SET origin_type = ?, metadata_version = ?, last_updated = ? WHERE uuid = ?",
+                    update_data,
+                )
+                conn.commit()
+                update_data = []
+
+    # Commit any remaining final batch
+    if update_data:
+        cursor.executemany(
+            "UPDATE assets SET origin_type = ?, metadata_version = ?, last_updated = ? WHERE uuid = ?",
+            update_data,
+        )
+        conn.commit()
+
+    conn.close()
+    client.close()
+    cluster.close()
+
+    logger.info(f"Origin analysis complete. Success: {successful}, Errors: {errors}")
+
+
+def rescale_asset_worker(uuid: str, file_path_str: str, scaling_factor: float) -> tuple[str, str, float]:  # fmt:skip
+    """
+    A simple, synchronous worker function that rescales a single asset.
+    This function will be distributed by Dask.
+    Returns: (uuid, path_to_scaled_file, actual_scaling_factor)
+    """
+    try:
+        file_path = Path(file_path_str)
+        scaled_model_path = file_path.with_stem(f"{uuid}_scaled")
+        success = scale_glb_model(file_path, scaled_model_path, scaling_factor, backend="blender")  # fmt:skip
+
+        if success:
+            return uuid, str(scaled_model_path), scaling_factor
+        else:
+            logger.warning(f"Scaling failed for {uuid}")
+            return uuid, "failure", -1.0
+    except Exception as e:
+        logger.error(f"Exception during scaling of {uuid}: {e}")
+        return uuid, "failure", -1.0
+
+
+def recenter_asset_worker(
+    uuid: str, file_path_str: str, origin_type: str, on_floor: bool
+) -> tuple[str, str, str]:
+    """
+    A simple, synchronous worker function that recenters a single asset.
+    This function will be distributed by Dask.
+    Returns: (uuid, path_to_recentered_file, origin_type)
+    """
+    try:
+        file_path = Path(file_path_str)
+        recentered_model_path = file_path.with_stem(f"{uuid}_recentered")
+        success = recenter_glb_model(
+            file_path,
+            recentered_model_path,
+            origin_type,
+            backend="blender",
+        )
+
+        if success:
+            return uuid, str(recentered_model_path), origin_type
+        else:
+            logger.warning(f"Recentering failed for {uuid}")
+            return uuid, "failure", origin_type
+    except Exception as e:
+        logger.error(f"Exception during recentering of {uuid}: {e}")
+        return uuid, "failure", origin_type
+
+
+def perform_rescaling_dask(version: int):
+    """
+    Computes rescaling for assets using offline ObjaTHOR annotations and Dask for parallel processing.
+    """
+    logger.info("Starting offline asset rescaling with Dask...")
+
+    # Load the offline annotations first
+    objathor_annotations = load_objathor_annotation()
+    if not objathor_annotations:
+        logger.warning("ObjaTHOR annotations not found. Skipping rescaling.")
+        return
+
+    # Query assets that have not been rescaled yet
+    conn = sqlite3.connect(EXTRA_INDEX_DB_FILE)
+    cursor = conn.cursor()
+    query = "SELECT uuid, file_path FROM assets WHERE fs_path_rescaled IS NULL"
+    params = ()
+    if LIMIT:
+        query += " LIMIT ?"
+        params += (LIMIT,)
+    target_assets = cursor.execute(query, params).fetchall()
+    conn.close()
+
+    # Identify rescaling jobs from offline data
+    jobs = []
+    for uuid, file_path_str in target_assets:
+        if uuid in objathor_annotations:
+            file_path = Path(file_path_str)
+            _, original_dims, _ = get_glb_dimensions(file_path)
+            analysis = extract_scale_analysis_from_objathor(uuid, objathor_annotations, original_dims)  # fmt:skip
+            if analysis and analysis["misscaled"]:
+                sf = analysis["correction_factor"]
+                if sf is not None and not math.isclose(sf, 1.0, abs_tol=0.01):
+                    jobs.append({"uuid": uuid, "file_path": file_path_str, "scaling_factor": sf})  # fmt:skip
+
+    if not jobs:
+        logger.info("No assets found requiring offline rescaling.")
+        return
+
+    logger.info(f"Found {len(jobs)} assets for offline rescaling.")
+
+    # Set up Dask and run the jobs
+    cluster = LocalCluster(threads_per_worker=1)
+    client = Client(cluster)
+    logger.info(f"Dask dashboard available at: {client.dashboard_link}")
+
+    futures = client.map(
+        rescale_asset_worker,
+        [j["uuid"] for j in jobs],
+        [j["file_path"] for j in jobs],
+        [j["scaling_factor"] for j in jobs],
+    )
+
+    # Process results and prepare for DB update
+    conn = sqlite3.connect(EXTRA_INDEX_DB_FILE)
+    cursor = conn.cursor()
+    update_data = []
+    timestamp = datetime.datetime.now().isoformat()
+    successful, errors = 0, 0
+
+    with tqdm(as_completed(futures, with_results=True),total=len(jobs),desc="Rescaling assets",) as pbar:  # fmt:skip
+        for future, result in pbar:
+            if isinstance(result, Exception):
+                errors += 1
+                continue
+
+            uuid, scaled_path, sf = result
+            if scaled_path == "failure":
+                errors += 1
+                continue
+
+            # Append data for batch update
+            update_data.append((scaled_path, sf, "objaverse-thor", version, timestamp, uuid))  # fmt:skip
+            successful += 1
+
+            if len(update_data) >= BATCH_SIZE:
+                cursor.executemany(
+                    """UPDATE assets SET
+                       fs_path_rescaled = ?,
+                       scaling_factor = ?,
+                       rescaled_by = ?,
+                       metadata_version = ?,
+                       last_updated = ?
+                       WHERE uuid = ?""",
+                    update_data,
+                )
+                conn.commit()
+                update_data = []
+
+    # Commit any remaining updates
+    if update_data:
+        cursor.executemany(
+            """UPDATE assets SET
+               fs_path_rescaled = ?,
+               scaling_factor = ?,
+               rescaled_by = ?,
+               metadata_version = ?,
+               last_updated = ?
+               WHERE uuid = ?""",
+            update_data,
+        )
+        conn.commit()
+    conn.close()
+
+    client.close()
+    cluster.close()
+    logger.info(f"Offline rescaling complete. Success: {successful}, Errors: {errors}")
+
+
+def perform_recentering_dask(version: int):
+    """
+    Performs recentering for off-center assets using ObjaTHOR onFloor attribute
+    and Dask for parallel processing.
+    """
+    logger.info("Starting offline asset recentering with Dask...")
+
+    # Load the offline annotations first
+    objathor_annotations = load_objathor_annotation()
+    if not objathor_annotations:
+        logger.warning("ObjaTHOR annotations not found. Skipping recentering.")
+        return
+
+    # Query assets that are off-center and not yet recentered
+    conn = sqlite3.connect(EXTRA_INDEX_DB_FILE)
+    cursor = conn.cursor()
+    query = "SELECT uuid, file_path, fs_path_rescaled FROM assets WHERE origin_type = 'off-center' AND fs_path_recentered IS NULL"
+    params = ()
+    if LIMIT:
+        query += " LIMIT ?"
+        params += (LIMIT,)
+    target_assets = cursor.execute(query, params).fetchall()
+    conn.close()
+
+    # Identify recentering jobs from offline data
+    jobs = []
+    for uuid, file_path_str, fs_path_rescaled in target_assets:
+        # HACK: prefer rescaled asset (.glb) files over original, if available.
+        # NOTE: assumes rescaling occurs BEFORE recentering. (makes sense bc rescaling is more important.)
+        input_path_str = fs_path_rescaled if fs_path_rescaled else file_path_str
+        if uuid in objathor_annotations:
+            on_floor = objathor_annotations[uuid]["onFloor"]
+            on_object = objathor_annotations[uuid]["onObject"]
+            strategy = "ground" if (on_floor or on_object) else "median"
+        else:
+            # Fallback for non-ObjaTHOR assets
+            on_floor = False
+            strategy = "median"
+
+        jobs.append(
+            {
+                "uuid": uuid,
+                "file_path": input_path_str,
+                "origin_type": strategy,
+                "on_floor": on_floor,
+            }
+        )
+
+    if not jobs:
+        logger.info("No off-center assets found requiring recentering.")
+        return
+
+    logger.info(f"Found {len(jobs)} off-center assets for recentering.")
+
+    # Set up Dask and run the jobs
+    cluster = LocalCluster(threads_per_worker=1)
+    client = Client(cluster)
+    logger.info(f"Dask dashboard available at: {client.dashboard_link}")
+
+    futures = client.map(
+        recenter_asset_worker,
+        [j["uuid"] for j in jobs],
+        [j["file_path"] for j in jobs],
+        [j["origin_type"] for j in jobs],
+        [j["on_floor"] for j in jobs],
+    )
+
+    # Process results and prepare for DB update
+    conn = sqlite3.connect(EXTRA_INDEX_DB_FILE)
+    cursor = conn.cursor()
+    update_data = []
+    timestamp = datetime.datetime.now().isoformat()
+    successful, errors = 0, 0
+
+    with tqdm(as_completed(futures, with_results=True),total=len(jobs),desc="Recentering assets",) as pbar:  # fmt:skip
+        for future, result in pbar:
+            if isinstance(result, Exception):
+                errors += 1
+                continue
+
+            uuid, recentered_path, strategy = result
+            if recentered_path == "failure":
+                errors += 1
+                continue
+
+            # Append data for batch update
+            update_data.append((recentered_path, "graphics-db", strategy, version, timestamp, uuid))  # fmt:skip
+            successful += 1
+
+            # Commit to database in batches
+            if len(update_data) >= BATCH_SIZE:
+                cursor.executemany(
+                    """UPDATE assets SET
+                       fs_path_recentered = ?,
+                       recentered_by = ?,
+                       recentering_strategy = ?,
+                       metadata_version = ?,
+                       last_updated = ?
+                       WHERE uuid = ?""",
+                    update_data,
+                )
+                conn.commit()
+                update_data = []
+                logger.info(f"Committed batch of {BATCH_SIZE} updates to DB.")
+
+    # Commit any remaining updates
+    if update_data:
+        cursor.executemany(
+            """UPDATE assets SET
+               fs_path_recentered = ?,
+               recentered_by = ?,
+               recentering_strategy = ?,
+               metadata_version = ?,
+               last_updated = ?
+               WHERE uuid = ?""",
+            update_data,
+        )
+        conn.commit()
+    conn.close()
+
+    client.close()
+    cluster.close()
+    logger.info(f"Offline recentering complete. Success: {successful}, Errors: {errors}")  # fmt:skip
+
+
 def main():
-    parser = argparse.ArgumentParser(description="")
+    configure_logging(level="INFO")
+
+    global LIMIT
+    global OBJATHOR_ONLY
+    parser = argparse.ArgumentParser(
+        description="Setup extra index database with metadata for 3D assets"
+    )
     # NOTE: data_dir is sourced from core/config.py
     parser.add_argument("--reset", action="store_true", help="Clear all existing data.")
+    parser.add_argument(
+        "--nuke",
+        choices=["rescale", "recenter"],
+        help="Nuke specific columns after backing up the DB. For 'rescale': clears fs_path_rescaled, rescaled_by, scaling_factor. For 'recenter': clears fs_path_recentered, recentered_by, recentering_strategy.",
+    )
     parser.add_argument(
         "--strategy",
         choices=["vlm_only", "prefer_external", "external_only"],
@@ -619,14 +1127,68 @@ def main():
         default="external_only",
         help="Annotation strategy: vlm_only (VLM analysis only), prefer_external (try external first, fallback to VLM), external_only (external annotations only)",
     )
+    parser.add_argument(
+        "--compute-origins",
+        action="store_true",
+        help="Compute origin types for all assets using Dask (CPU-intensive, parallelized)",
+    )
+    parser.add_argument(
+        "--rescale",
+        action="store_true",
+        help="Perform rescaling for assets using offline data and Dask (CPU-intensive, parallelized)",
+    )
+    parser.add_argument(
+        "--recenter",
+        action="store_true",
+        help="Perform recentering for off-center assets using Dask (CPU-intensive, parallelized)",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Limit the number of assets to process for testing.",
+    )
+    parser.add_argument(
+        "--objathor-only",
+        action="store_true",
+        default=False,
+        help="Only target assets contained in ObjaTHOR for metadata computation.",
+    )
+    parser.add_argument(
+        "--zombie",
+        action="store_true",
+        default=False,
+        help="Keep reviving dask worker process even if they die.",
+    )
     args = parser.parse_args()
+    LIMIT = args.limit
+    OBJATHOR_ONLY = args.objathor_only
+    if OBJATHOR_ONLY:
+        load_objathor_annotation()
 
     setup_database()
+    # TEMPDEAC
+    # for _source_name, local_dir in LOCAL_FS_PATHS.items():
+    #     setup_index(Path(local_dir).expanduser())
+    #     compute_metadata(METADATA_VERSION, strategy=args.strategy)
+
     if args.reset:
         reset_metadata()
-    for source_name, local_dir in LOCAL_FS_PATHS.items():
-        setup_index(Path(local_dir).expanduser())
-        compute_metadata(METADATA_VERSION, strategy=args.strategy)
+
+    if args.nuke:
+        nuke(args.nuke)
+
+    if args.zombie:
+        dask.config.set({"distributed.scheduler.allowed-failures": 1000})  # per worker; multiply by worker count for total! # fmt:skip
+
+    if args.rescale:
+        perform_rescaling_dask(METADATA_VERSION)
+
+    if args.compute_origins:
+        compute_origin_types_dask(METADATA_VERSION)
+
+    if args.recenter:
+        perform_recentering_dask(METADATA_VERSION)
 
 
 if __name__ == "__main__":

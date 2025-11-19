@@ -1,5 +1,6 @@
 compress-pickle
 fastapi
+gitpython
 loguru
 numpy
 objaverse
@@ -8,9 +9,9 @@ pgvector
 psycopg[binary, pool]
 pydantic
 pydantic-settings
+requests
 pyvista
 rich
 torch
 uvicorn
 sentence-transformers
-requests

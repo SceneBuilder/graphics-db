@@ -5,7 +5,7 @@ import sys
 from loguru import logger
 
 
-def configure_logging(level="INFO", sink=sys.stderr, format="{level: <9} {message}"):
+def configure_logging(level="INFO", sink=sys.stderr):
     """
     Configures the Loguru logger for the library.
 
@@ -24,5 +24,5 @@ def configure_logging(level="INFO", sink=sys.stderr, format="{level: <9} {messag
         The configured logger instance.
     """
     logger.remove()
-    logger.add(sink, format=format, level=level)
+    logger.add(sink, level=level)
     return logger
